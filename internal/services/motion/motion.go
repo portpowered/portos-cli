@@ -216,12 +216,18 @@ func (m *service) Open(ctx context.Context, holdID, endpointID string) error {
 	m.opening[holdID] = opened
 	m.mu.Unlock()
 	reply, err := m.client.SendSync(ctx, endpointID, api.INTERFACE_PORTOS_REMOTE_CONTROL, api.INTERFACE_PORTOS_REMOTE_CONTROL_START_SESSION, map[string]any{})
-	if err := replyError(api.INTERFACE_PORTOS_REMOTE_CONTROL_START_SESSION, reply, err); err != nil {
+	if startErr := replyError(api.INTERFACE_PORTOS_REMOTE_CONTROL_START_SESSION, reply, err); startErr != nil {
+		if startMayHaveLanded(reply, err) {
+			// The robot may be in remote control off its dock with nobody holding it.
+			if homeErr := m.endAndSendHome(ctx, endpointID); homeErr != nil {
+				startErr = errors.Join(startErr, homeErr)
+			}
+		}
 		m.mu.Lock()
 		delete(m.opening, holdID)
 		m.mu.Unlock()
 		close(opened)
-		return err
+		return startErr
 	}
 	s := &session{
 		svc: m, id: holdID, endpoint: endpointID,
@@ -600,15 +606,31 @@ func (s *session) shutdown(ctx context.Context) error {
 	if notActive {
 		return nil // the robot is already docked: nothing to send
 	}
-	// Send the robot home even if the caller gave up. Each send has its own
-	// budget, so a provider that times out on end-session still leaves the dock its full time.
-	var errs []error
-	if !down { // a trip that gave way to this close left the session ended already
-		if err := s.closeSend(ctx, api.INTERFACE_PORTOS_REMOTE_CONTROL, api.INTERFACE_PORTOS_REMOTE_CONTROL_END_SESSION); err != nil {
-			errs = append(errs, err)
-		}
+	if down { // a trip that gave way to this close left the session ended already
+		return s.svc.sendHome(ctx, s.endpoint)
 	}
-	if err := s.sendHome(ctx); err != nil {
+	return s.svc.endAndSendHome(ctx, s.endpoint)
+}
+
+// startMayHaveLanded reports whether a failed start-session may still have
+// put the robot in remote control: no reply came back, or the provider timed
+// out. An auth rejection never reached the robot.
+func startMayHaveLanded(reply *api.MessageRequest, err error) bool {
+	if err != nil {
+		return !portos.IsUnauthorized(err)
+	}
+	return reply == nil || portos.HasCode(reply, string(api.ErrorCodePROVIDERTIMEOUT))
+}
+
+// endAndSendHome sends end-session, then return-to-dock, even if the caller
+// gave up. Each send has its own budget, so a provider that times out on
+// end-session still leaves the dock its full time.
+func (m *service) endAndSendHome(ctx context.Context, endpoint string) error {
+	var errs []error
+	if err := m.closeSend(ctx, endpoint, api.INTERFACE_PORTOS_REMOTE_CONTROL, api.INTERFACE_PORTOS_REMOTE_CONTROL_END_SESSION); err != nil {
+		errs = append(errs, err)
+	}
+	if err := m.sendHome(ctx, endpoint); err != nil {
 		errs = append(errs, err)
 	}
 	return errors.Join(errs...)
@@ -617,32 +639,32 @@ func (s *session) shutdown(ctx context.Context) error {
 // sendHome sends return-to-dock, and sends it again after a pause while the
 // replies fail, up to DockAttempts tries. A provider that timed out often
 // answers the next try. An auth rejection is not retried: the next try would be rejected too.
-func (s *session) sendHome(ctx context.Context) error {
+func (m *service) sendHome(ctx context.Context, endpoint string) error {
 	dock := api.INTERFACE_PORTOS_ROBOTIC_VACUUM_CLEANER_RETURN_TO_DOCK
 	for try := 1; ; try++ {
-		err := s.closeSend(ctx, api.INTERFACE_PORTOS_ROBOTIC_VACUUM_CLEANER, dock)
+		err := m.closeSend(ctx, endpoint, api.INTERFACE_PORTOS_ROBOTIC_VACUUM_CLEANER, dock)
 		if err == nil || portos.IsUnauthorized(err) {
 			return err
 		}
 		if try == DockAttempts {
 			return fmt.Errorf("%w (sent %d times)", err, try)
 		}
-		s.pause(DockRetryPause)
+		m.pause(DockRetryPause)
 	}
 }
 
 // closeSend sends one message of a close on its own budget, detached from the caller.
-func (s *session) closeSend(ctx context.Context, namespace, name string) error {
+func (m *service) closeSend(ctx context.Context, endpoint, namespace, name string) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), closeTimeout)
 	defer cancel()
-	reply, err := s.svc.client.SendSync(ctx, s.endpoint, namespace, name, map[string]any{})
+	reply, err := m.client.SendSync(ctx, endpoint, namespace, name, map[string]any{})
 	return replyError(name, reply, err)
 }
 
 // pause waits d on the service clock.
-func (s *session) pause(d time.Duration) {
+func (m *service) pause(d time.Duration) {
 	done := make(chan struct{})
-	t := s.svc.clock.AfterFunc(d, func() { close(done) })
+	t := m.clock.AfterFunc(d, func() { close(done) })
 	defer t.Stop()
 	<-done
 }

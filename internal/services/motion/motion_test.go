@@ -205,6 +205,47 @@ func TestOpenFailureIsAnError(t *testing.T) {
 	require.Error(t, r.svc.Open(context.Background(), holdID, endpointID))
 	_, err := r.svc.Move(context.Background(), holdID, agentMove())
 	require.Error(t, err, "no session was registered")
+	require.Equal(t, []string{"start-session"}, r.client.names(), "a refused start reached no robot, so nothing is sent home")
+}
+
+// failStart answers start-session with the given reply and error and every other send with success.
+func failStart(reply *api.MessageRequest, err error) func(int, call) (*api.MessageRequest, error) {
+	return func(_ int, c call) (*api.MessageRequest, error) {
+		if c.name == "start-session" {
+			return reply, err
+		}
+		return moveReply(0, 0), nil
+	}
+}
+
+func timedOutReply() *api.MessageRequest {
+	reply := failedReply("timeout")
+	reply.Errors[0].Error.Code = api.ErrorCodePROVIDERTIMEOUT
+	return reply
+}
+
+func TestAnOpenTheProviderTimedOutSendsTheRobotHome(t *testing.T) {
+	r := newRig(keepalive.ModePing)
+	r.client.handler = failStart(timedOutReply(), nil)
+	err := r.svc.Open(context.Background(), holdID, endpointID)
+	require.ErrorContains(t, err, "PROVIDER_TIMEOUT")
+	require.Equal(t, []string{"start-session", "end-session", "return-to-dock"}, r.client.names())
+	r.client.handler = nil
+	require.NoError(t, r.svc.Open(context.Background(), holdID, endpointID), "the failed open left nothing registered")
+}
+
+func TestAnOpenWithNoReplySendsTheRobotHome(t *testing.T) {
+	r := newRig(keepalive.ModePing)
+	r.client.handler = failStart(nil, context.DeadlineExceeded)
+	require.ErrorIs(t, r.svc.Open(context.Background(), holdID, endpointID), context.DeadlineExceeded)
+	require.Equal(t, []string{"start-session", "end-session", "return-to-dock"}, r.client.names())
+}
+
+func TestAnOpenRejectedForAuthSendsNothingHome(t *testing.T) {
+	r := newRig(keepalive.ModePing)
+	r.client.handler = failStart(nil, &apiclient.APIError{StatusCode: 401, Err: errors.New("unauthorized")})
+	require.Error(t, r.svc.Open(context.Background(), holdID, endpointID))
+	require.Equal(t, []string{"start-session"}, r.client.names())
 }
 
 func TestMoveRewritesSeqNum(t *testing.T) {
