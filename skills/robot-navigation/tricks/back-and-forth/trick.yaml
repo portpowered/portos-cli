@@ -1,0 +1,13 @@
+name: back-and-forth
+does: Drives between two points N times, re-aiming from the measured pose each leg.
+run: python3 tricks/back-and-forth/run.py <endpoint> --laps 3 --distance 1.0
+parameters:
+  laps: how many round trips (default 2)
+  a: x,y of the first point (default where the robot is)
+  b: x,y of the second point (default --distance metres ahead)
+  tolerance: metres a turnaround may miss its point by (default 0.15)
+checkpoints: none; the last output line is the result
+validated: never
+runs: 0
+successes: 0
+notes: []

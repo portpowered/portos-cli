@@ -1,0 +1,12 @@
+name: look-around
+does: Turns a full circle in steps and saves a frame at each, then hands the frames back.
+run: python3 tricks/look-around/run.py <endpoint> --step 45 --out frames/
+parameters:
+  step: degrees between frames (default 45, so 8 frames)
+  out: directory for the frames
+checkpoints:
+  look-around: the frames with the heading each was taken at; you look for the thing
+validated: never
+runs: 0
+successes: 0
+notes: []

@@ -70,6 +70,15 @@ port message record <endpoint-id> --output ./clip.mp4 --duration 30 --relay-only
 Run `port --help`, or `port <command> --help`, for every command and flag. Add
 `--json` for machine-readable output.
 
+## Drive a robot vacuum
+
+`port session hold <endpoint-id> --motion` keeps a robot under remote control
+between commands; every move after it carries the printed lease and comes back
+measured. [`skills/robot-navigation`](skills/robot-navigation/SKILL.md) is an
+Agent Skill for agents that drive robots this way: the rules, a stdlib-only
+Python helper that corrects moves from the measured replies, a map renderer and
+two example tricks.
+
 ## Build and test
 
 ```bash
