@@ -68,6 +68,8 @@ const (
 	// CodeCameraUnavailable is a snapshot the held camera cannot serve: another
 	// viewer took the stream, renewal failed, or no frame could be decoded.
 	CodeCameraUnavailable = "camera_unavailable"
+	// CodeTalkbackBusy is a clip sent while another plays on the held camera.
+	CodeTalkbackBusy = "talkback_busy"
 )
 
 // DeadManCloseTimeout bounds how long a dead-man ending waits for the sessions

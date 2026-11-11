@@ -595,6 +595,51 @@ var Commands = map[string]CommandDoc{
 			},
 		},
 	},
+	"port.message.play-audio": {
+		ID: "port.message.play-audio",
+		Path: []string{
+			"port",
+			"message",
+			"play-audio",
+		},
+		Summary:            "Play an audio file on an endpoint",
+		Description:        "Play an audio file on an endpoint's speaker. Under a camera hold (session hold --camera, with the lease) the clip goes through the held camera session - the CLI converts it to Ogg/Opus with ffmpeg when it is not Ogg already, and the reply comes once it starts. Otherwise it is the media-player/play-audio message and Port OS converts the audio. Clips are at most 60 seconds on a robot; a second clip while one plays is refused as busy (exit 12). With --json the result gives the clip's length in seconds when it is Ogg/Opus.",
+		Category:           "messages",
+		CanonicalReference: "api/cli/commands.yaml",
+		Arguments: []ArgumentDoc{
+			{
+				Name:        "endpoint-id",
+				Description: "Endpoint ID or local endpoint alias.",
+				Required:    true,
+				Variadic:    false,
+			},
+		},
+		Flags: []FlagDoc{
+			{
+				Name:        "file",
+				Shorthand:   "f",
+				Type:        "string",
+				Default:     "",
+				Required:    true,
+				Description: "Audio file to play (.ogg, .opus, .mp3, .wav, .m4a, .aac, .flac).",
+			},
+			{
+				Name:        "title",
+				Shorthand:   "",
+				Type:        "string",
+				Default:     "",
+				Required:    false,
+				Description: "Now-playing name for endpoints with a display.",
+			},
+		},
+		Examples: []ExampleDoc{
+			{
+				Description: "Say hello through the robot held with its camera.",
+				Invocation:  "port message play-audio ep/a1b2c3d4 --file ./hello.ogg --lease <lease>",
+				Output:      "",
+			},
+		},
+	},
 	"port.message.record": {
 		ID: "port.message.record",
 		Path: []string{
@@ -1320,7 +1365,7 @@ var Commands = map[string]CommandDoc{
 				Type:        "bool",
 				Default:     "false",
 				Required:    false,
-				Description: "Hold the endpoint's camera session, so snapshots under the lease skip opening a new one.",
+				Description: "Hold the endpoint's camera session, so snapshots and play-audio under the lease skip opening a new one.",
 			},
 			{
 				Name:        "dead-man",

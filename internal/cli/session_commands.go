@@ -53,7 +53,7 @@ The host ends the hold, sending the robot home, when no command arrives for
 		},
 	}
 	cmd.Flags().BoolVar(&motion, "motion", false, "Hold the endpoint's remote-control session")
-	cmd.Flags().BoolVar(&camera, "camera", false, "Hold the endpoint's camera session, so snapshots under the lease skip opening a new one")
+	cmd.Flags().BoolVar(&camera, "camera", false, "Hold the endpoint's camera session, so snapshots and play-audio under the lease skip opening a new one")
 	cmd.Flags().DurationVar(&deadMan, "dead-man", 0, "End the hold after this long without a command (default 10m)")
 	return cmd
 }

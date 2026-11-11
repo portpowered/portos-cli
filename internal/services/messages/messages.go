@@ -1,13 +1,15 @@
 // Package messages answers the capability messages a caller sends to the
 // session host under a hold's lease. Only the hold's own capabilities are
-// served: moves go to the motion session, snapshots to the held camera, and
-// session messages belong to the hold.
+// served: moves go to the motion session, snapshots and play-audio to the held
+// camera, and session messages belong to the hold.
 package messages
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -27,9 +29,11 @@ type Mover interface {
 	Move(ctx context.Context, holdID string, body map[string]any) (*api.MessageRequest, error)
 }
 
-// Snapshotter returns the newest frame of a hold's camera as JPEG.
-type Snapshotter interface {
+// Camera serves a hold's camera: its newest frame as JPEG, and Ogg/Opus clips
+// played on its talkback track.
+type Camera interface {
 	Snapshot(ctx context.Context, holdID string) (jpeg []byte, capturedAt time.Time, err error)
+	PlayAudio(ctx context.Context, holdID string, ogg []byte) (time.Duration, error)
 }
 
 // Service dispatches one message sent to the host.
@@ -41,15 +45,15 @@ type Service interface {
 }
 
 type service struct {
-	auth      Authorizer
-	mover     Mover
-	snapshots Snapshotter
-	clock     clock.Clock
+	auth   Authorizer
+	mover  Mover
+	camera Camera
+	clock  clock.Clock
 }
 
 // New returns a messages Service.
-func New(auth Authorizer, mover Mover, snapshots Snapshotter, c clock.Clock) Service {
-	return &service{auth: auth, mover: mover, snapshots: snapshots, clock: c}
+func New(auth Authorizer, mover Mover, camera Camera, c clock.Clock) Service {
+	return &service{auth: auth, mover: mover, camera: camera, clock: c}
 }
 
 const (
@@ -64,11 +68,14 @@ func (s *service) Dispatch(ctx context.Context, lease string, req *api.CreateMes
 	}
 	endpoint := req.Target.Id
 	header := req.Message.Header
-	if header.Namespace == api.INTERFACE_PORTOS_SNAPSHOT {
+	switch header.Namespace {
+	case api.INTERFACE_PORTOS_SNAPSHOT:
 		return s.snapshot(ctx, lease, endpoint, header.Name)
-	}
-	if header.Namespace != api.INTERFACE_PORTOS_REMOTE_CONTROL {
-		return s.refuse(endpoint, holds.CodeNotServedByHold, "the session host serves only remote-control and snapshot for a held endpoint; send "+header.Namespace+"/"+header.Name+" without the lease"), nil
+	case api.INTERFACE_PORTOS_MEDIA_PLAYER:
+		return s.playAudio(ctx, lease, endpoint, header.Name, req.Message.Body)
+	case api.INTERFACE_PORTOS_REMOTE_CONTROL:
+	default:
+		return s.refuse(endpoint, holds.CodeNotServedByHold, "the session host serves only remote-control, snapshot and media-player play-audio for a held endpoint; send "+header.Namespace+"/"+header.Name+" without the lease"), nil
 	}
 	switch header.Name {
 	case nameStartSession, nameEndSession:
@@ -112,7 +119,7 @@ func (s *service) snapshot(ctx context.Context, lease, endpoint, name string) (*
 	if err == nil {
 		var jpeg []byte
 		var capturedAt time.Time
-		if jpeg, capturedAt, err = s.snapshots.Snapshot(ctx, hold.ID); err == nil {
+		if jpeg, capturedAt, err = s.camera.Snapshot(ctx, hold.ID); err == nil {
 			return s.snapshotReply(endpoint, jpeg, capturedAt), nil
 		}
 	}
@@ -121,6 +128,62 @@ func (s *service) snapshot(ctx context.Context, lease, endpoint, name string) (*
 		return s.refuse(endpoint, holdErr.Code, holdErr.Message), nil
 	}
 	return nil, fmt.Errorf("messages: snapshot: %w", err)
+}
+
+// playAudio plays an inline Ogg/Opus clip on the held camera's talkback track
+// and answers once it has started.
+func (s *service) playAudio(ctx context.Context, lease, endpoint, name string, body map[string]any) (*api.MessageRequest, error) {
+	if name != api.INTERFACE_PORTOS_MEDIA_PLAYER_PLAY_AUDIO {
+		return s.refuse(endpoint, holds.CodeNotServedByHold, "the hold serves only play-audio, not "+name), nil
+	}
+	hold, err := s.auth.Authorize(lease, endpoint, holds.KindCamera)
+	if err == nil {
+		var ogg []byte
+		if ogg, err = oggClip(body); err == nil {
+			if _, err = s.camera.PlayAudio(ctx, hold.ID, ogg); err == nil {
+				return s.playingReply(endpoint), nil
+			}
+		}
+	}
+	var holdErr *holds.Error
+	if errors.As(err, &holdErr) {
+		return s.refuse(endpoint, holdErr.Code, holdErr.Message), nil
+	}
+	return nil, fmt.Errorf("messages: play-audio: %w", err)
+}
+
+// oggClip reads the clip from a play-audio body. Under a camera hold the clip
+// travels inline as Ogg/Opus; the host fetches nothing.
+func oggClip(body map[string]any) ([]byte, error) {
+	audio, _ := body["audio"].(map[string]any)
+	data, _ := audio["data"].(string)
+	mime, _ := audio["mimeType"].(string)
+	invalid := func(message string) error {
+		return &holds.Error{Code: holds.CodeInvalidRequest, Message: message}
+	}
+	if data == "" {
+		return nil, invalid("under a camera hold, play-audio takes the clip inline as audio.data; port message play-audio --file sends it")
+	}
+	if mime = strings.ToLower(strings.TrimSpace(strings.Split(mime, ";")[0])); mime != "audio/ogg" && mime != "audio/opus" {
+		return nil, invalid("under a camera hold, play-audio takes Ogg/Opus (audio/ogg), not " + mime + "; port message play-audio --file converts it")
+	}
+	ogg, err := base64.StdEncoding.DecodeString(data)
+	if err != nil {
+		return nil, invalid("audio.data is not base64")
+	}
+	return ogg, nil
+}
+
+func (s *service) playingReply(endpoint string) *api.MessageRequest {
+	message := api.NewMediaPlayerInterfacePlaybackResultMessage(api.MediaPlayerInterfacePlaybackResultMessage{PlaybackState: api.PlaybackStatePlaying})
+	return &api.MessageRequest{
+		Id:                  "host-" + uuid.NewString(),
+		Status:              api.SUCCEEDED,
+		Deadline:            s.clock.Now(),
+		SyncDeadlineSeconds: 1,
+		Results:             []api.MessageRequestResult{{TargetId: endpoint, Message: &message}},
+		Errors:              []api.MessageRequestError{},
+	}
 }
 
 func (s *service) snapshotReply(endpoint string, jpeg []byte, capturedAt time.Time) *api.MessageRequest {
@@ -157,6 +220,8 @@ func Refusal(now time.Time, endpointID, code, message string) *api.MessageReques
 		errCode, family = api.ErrorCodeUNSUPPORTEDOPERATION, api.ErrorFamilyREQUESTINVALID
 	case holds.CodeCameraUnavailable:
 		errCode, family = api.ErrorCodeSERVICEUNAVAILABLE, api.ErrorFamilySERVICEUNAVAILABLE
+	case holds.CodeInvalidRequest:
+		errCode, family = api.ErrorCodeBADREQUEST, api.ErrorFamilyREQUESTINVALID
 	}
 	return &api.MessageRequest{
 		Id:                  "host-" + uuid.NewString(),

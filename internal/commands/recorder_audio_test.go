@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -140,6 +141,8 @@ type pionCamera struct {
 	// dropEvery skips every Nth frame but keeps the RTP clock moving, like a camera that stamps
 	// 25 fps and delivers fewer frames.
 	dropEvery int
+	// heard counts the audio packets the client sends the camera (talkback).
+	heard atomic.Int64
 }
 
 func (c *pionCamera) Send(ctx context.Context, request *api.CreateMessageRequest, _ ...string) (*api.MessageRequest, error) {
@@ -174,6 +177,17 @@ func (c *pionCamera) Send(ctx context.Context, request *api.CreateMessageRequest
 	pc.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
 		if state == webrtc.PeerConnectionStateConnected {
 			close(started)
+		}
+	})
+	pc.OnTrack(func(track *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
+		if track.Kind() != webrtc.RTPCodecTypeAudio {
+			return
+		}
+		for {
+			if _, _, err := track.ReadRTP(); err != nil {
+				return
+			}
+			c.heard.Add(1)
 		}
 	})
 	if err = pc.SetRemoteDescription(webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: offer}); err != nil {

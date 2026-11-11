@@ -36,13 +36,16 @@ type HeldCameraParams struct {
 }
 
 // HeldCamera is a camera peer the session host keeps open. It keeps the newest few seconds of
-// video so a snapshot is one local decode, with no new camera session.
+// video so a snapshot is one local decode, with no new camera session, and plays clips on a
+// send-only talkback track.
 type HeldCamera struct {
 	recorder *Recorder
 	params   HeldCameraParams
 	pc       *webrtc.PeerConnection
+	life     context.Context // ends when the camera closes
 	cancel   context.CancelFunc
 	dir      string
+	talkback *webrtc.TrackLocalStaticSample
 
 	done     chan struct{}
 	doneOnce sync.Once
@@ -56,6 +59,7 @@ type HeldCamera struct {
 	frameReady chan struct{} // closed and replaced on every new frame
 	counter    int
 	closed     bool
+	playing    bool
 }
 
 // heldSegment is one file of video that starts at a keyframe.
@@ -67,8 +71,8 @@ type heldSegment struct {
 	frames  int
 }
 
-// HoldCamera opens a camera session with a receive-only video peer and returns once the first
-// frame has arrived. Close ends the session.
+// HoldCamera opens a camera session with a receive-only video track and a send-only talkback
+// track, and returns once the first frame has arrived. Close ends the session.
 func (r *Recorder) HoldCamera(ctx context.Context, params HeldCameraParams) (*HeldCamera, error) {
 	if params.EndpointID == "" || params.SessionID == "" {
 		return nil, errors.New("endpoint ID and session ID are required")
@@ -91,7 +95,7 @@ func (r *Recorder) HoldCamera(ctx context.Context, params HeldCameraParams) (*He
 		_ = os.RemoveAll(dir)
 		return nil, fmt.Errorf("create peer connection: %w", err)
 	}
-	h := &HeldCamera{recorder: r, params: params, pc: pc, cancel: cancel, dir: dir, done: make(chan struct{}), frameReady: make(chan struct{})}
+	h := &HeldCamera{recorder: r, params: params, pc: pc, life: streamCtx, cancel: cancel, dir: dir, done: make(chan struct{}), frameReady: make(chan struct{})}
 	opened, initiated := false, false
 	defer func() {
 		switch {
@@ -105,23 +109,10 @@ func (r *Recorder) HoldCamera(ctx context.Context, params HeldCameraParams) (*He
 		}
 	}()
 
-	if _, err = pc.AddTransceiverFromKind(webrtc.RTPCodecTypeVideo, webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionRecvonly}); err != nil {
-		return nil, fmt.Errorf("add video transceiver: %w", err)
-	}
-	pc.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
-		r.logger.Logger().Info("held camera connection state changed", zap.String("state", state.String()))
-		if state == webrtc.PeerConnectionStateFailed || state == webrtc.PeerConnectionStateClosed {
-			h.markDone()
-		}
-	})
 	started := make(chan error, 1)
-	pc.OnTrack(func(track *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
-		if track.Kind() != webrtc.RTPCodecTypeVideo {
-			return
-		}
-		h.readVideo(streamCtx, track, started)
-	})
-
+	if err = h.addTracks(started); err != nil {
+		return nil, err
+	}
 	offerSDP, err := gatherOffer(ctx, pc)
 	if err != nil {
 		return nil, err
@@ -148,6 +139,30 @@ func (r *Recorder) HoldCamera(ctx context.Context, params HeldCameraParams) (*He
 	}
 	opened = true
 	return h, nil
+}
+
+// addTracks offers the receive-only video and the send-only talkback track, and reads the video
+// into segments once it arrives. started receives the first frame's outcome.
+func (h *HeldCamera) addTracks(started chan<- error) error {
+	if _, err := h.pc.AddTransceiverFromKind(webrtc.RTPCodecTypeVideo, webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionRecvonly}); err != nil {
+		return fmt.Errorf("add video transceiver: %w", err)
+	}
+	if err := h.addTalkback(); err != nil {
+		return err
+	}
+	h.pc.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
+		h.recorder.logger.Logger().Info("held camera connection state changed", zap.String("state", state.String()))
+		if state == webrtc.PeerConnectionStateFailed || state == webrtc.PeerConnectionStateClosed {
+			h.markDone()
+		}
+	})
+	h.pc.OnTrack(func(track *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
+		if track.Kind() != webrtc.RTPCodecTypeVideo {
+			return
+		}
+		h.readVideo(h.life, track, started)
+	})
+	return nil
 }
 
 // readVideo writes the track into rolling segments until the stream ends. started receives nil

@@ -99,6 +99,39 @@ func (c *SnapshotCommand) Generate() *cobra.Command {
 	return command
 }
 
+// PlayAudioCliCommand wraps the play-audio command implementation.
+type PlayAudioCliCommand struct {
+	command *commands.PlayAudioCommand
+}
+
+// NewPlayAudioCliCommand returns a new PlayAudioCliCommand.
+func NewPlayAudioCliCommand(command *commands.PlayAudioCommand) *PlayAudioCliCommand {
+	return &PlayAudioCliCommand{command: command}
+}
+
+// Generate returns the cobra command for play-audio.
+func (c *PlayAudioCliCommand) Generate() *cobra.Command {
+	command := &cobra.Command{
+		Short: "Play an audio file on an endpoint",
+		Long: `Plays an audio file on an endpoint's speaker. Under a camera hold (session hold --camera,
+with the lease) the clip goes through the held camera session: the CLI converts it to Ogg/Opus
+with ffmpeg when it is not Ogg already, and the reply comes once it starts. Otherwise it is the
+media-player/play-audio message, and Port OS converts the audio. Clips are at most 60 seconds on
+a robot; a second clip while one plays is refused as busy (exit 12).`,
+		Example: `port message play-audio ep/a1b2c3d4 --file ./hello.ogg`,
+		Args:    cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			file, _ := cmd.Flags().GetString("file")
+			title, _ := cmd.Flags().GetString("title")
+			return c.command.Run(cmd.Context(), commands.PlayAudioParams{EndpointID: args[0], FilePath: file, Title: title})
+		},
+	}
+	command.Flags().StringP("file", "f", "", "Audio file to play (.ogg, .opus, .mp3, .wav, .m4a, .aac, .flac)")
+	command.MarkFlagRequired("file")
+	command.Flags().String("title", "", "Now-playing name for endpoints with a display")
+	return command
+}
+
 // RecordCommand wraps the record command implementation.
 type RecordCommand struct {
 	command *commands.RecordCommand

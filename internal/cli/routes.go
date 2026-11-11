@@ -32,6 +32,7 @@ type Router struct {
 	MessageCommand         *MessageCommand
 	SnapshotCommand        *SnapshotCommand
 	RecordCommand          *RecordCommand
+	PlayAudioCliCommand    *PlayAudioCliCommand
 	MoveCliCommand         *MoveCliCommand
 	ListCommandsCliCommand *ListCommandsCliCommand
 
@@ -74,6 +75,7 @@ func NewRouter(
 	messageCommand *MessageCommand,
 	snapshotCommand *SnapshotCommand,
 	recordCommand *RecordCommand,
+	playAudioCliCommand *PlayAudioCliCommand,
 	moveCliCommand *MoveCliCommand,
 	listCommandsCliCommand *ListCommandsCliCommand,
 	rulesCliCommand *RulesCommand,
@@ -110,6 +112,7 @@ func NewRouter(
 		MessageCommand:           messageCommand,
 		SnapshotCommand:          snapshotCommand,
 		RecordCommand:            recordCommand,
+		PlayAudioCliCommand:      playAudioCliCommand,
 		MoveCliCommand:           moveCliCommand,
 		ListCommandsCliCommand:   listCommandsCliCommand,
 		RulesCliCommand:          rulesCliCommand,
@@ -157,6 +160,7 @@ func (c Router) BuildRoot() *cobra.Command {
 	msgGroup := NewPath("message", c.MessageCommand.Generate())
 	msgGroup.AddCommand(NewPath("snapshot <endpoint-id> [output-path]", c.SnapshotCommand.Generate()))
 	msgGroup.AddCommand(NewPath("record <endpoint-id>", c.RecordCommand.Generate()))
+	msgGroup.AddCommand(NewPath("play-audio <endpoint-id>", c.PlayAudioCliCommand.Generate()))
 	msgGroup.AddCommand(NewPath("move <endpoint-id> <instructions...>", c.MoveCliCommand.Generate()))
 	msgGroup.AddCommand(NewPath("list-commands <endpoint-id>", c.ListCommandsCliCommand.Generate()))
 	root.AddCommand(msgGroup)

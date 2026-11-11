@@ -24,9 +24,10 @@ type stubStream struct {
 func (s *stubStream) Latest(context.Context, time.Duration) ([]byte, time.Time, error) {
 	return []byte{0xff, 0xd8}, time.Unix(1000, 0), nil
 }
-func (s *stubStream) Done() <-chan struct{}       { return s.done }
-func (s *stubStream) Close(context.Context) error { s.end(); return nil }
-func (s *stubStream) end()                        { s.once.Do(func() { close(s.done) }) }
+func (s *stubStream) Play(context.Context, []byte) (time.Duration, error) { return time.Second, nil }
+func (s *stubStream) Done() <-chan struct{}                               { return s.done }
+func (s *stubStream) Close(context.Context) error                         { s.end(); return nil }
+func (s *stubStream) end()                                                { s.once.Do(func() { close(s.done) }) }
 
 type stubOpener struct {
 	mu      sync.Mutex

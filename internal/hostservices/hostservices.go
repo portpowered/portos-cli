@@ -64,7 +64,7 @@ func New(opts Options) Built {
 	return Built{
 		Services: host.Services{
 			Holds:    &holdAdapter{holds: holdSvc, motion: motionSvc, camera: cameraSvc},
-			Messages: messages.New(holdSvc, motionSvc, snapshotter{camera: cameraSvc}, opts.Clock),
+			Messages: messages.New(holdSvc, motionSvc, heldCamera{camera: cameraSvc}, opts.Clock),
 		},
 		OnShutdown: func(ctx context.Context) {
 			holdSvc.EndAll(ctx, holds.ReasonHostShutdown)
@@ -90,15 +90,24 @@ func endCameraOnlyHold(holdSvc holds.Service, holdID string, reason holds.Reason
 	_ = holdSvc.Release(ctx, holdID, reason, detail)
 }
 
-// snapshotter serves the messages service's snapshots from the camera.
-type snapshotter struct{ camera camera.Service }
+// heldCamera serves the messages service's camera messages from the camera service.
+type heldCamera struct{ camera camera.Service }
 
-func (s snapshotter) Snapshot(ctx context.Context, holdID string) ([]byte, time.Time, error) {
-	if s.camera == nil {
-		return nil, time.Time{}, &holds.Error{Code: holds.CodeCameraUnavailable, Message: "this session host has no camera"}
+var errNoCamera = &holds.Error{Code: holds.CodeCameraUnavailable, Message: "this session host has no camera"}
+
+func (c heldCamera) Snapshot(ctx context.Context, holdID string) ([]byte, time.Time, error) {
+	if c.camera == nil {
+		return nil, time.Time{}, errNoCamera
 	}
-	frame, err := s.camera.Snapshot(ctx, holdID)
+	frame, err := c.camera.Snapshot(ctx, holdID)
 	return frame.JPEG, frame.CapturedAt, err
+}
+
+func (c heldCamera) PlayAudio(ctx context.Context, holdID string, ogg []byte) (time.Duration, error) {
+	if c.camera == nil {
+		return 0, errNoCamera
+	}
+	return c.camera.PlayAudio(ctx, holdID, ogg)
 }
 
 // LoginCheck returns the check holds run before opening: the stored

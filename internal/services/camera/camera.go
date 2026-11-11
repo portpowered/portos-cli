@@ -1,6 +1,7 @@
 // Package camera keeps a held endpoint's camera session open for the session
 // host: it opens the stream, renews it before Port OS ends it, serves the
-// newest frame, and reports a stream another viewer took away.
+// newest frame, plays clips on its talkback track, and reports a stream
+// another viewer took away.
 package camera
 
 import (
@@ -25,10 +26,20 @@ const (
 	renewTimeout = time.Minute
 )
 
+// Errors a Stream's Play returns.
+var (
+	// ErrTalkbackBusy is a clip sent while another is still playing.
+	ErrTalkbackBusy = errors.New("a clip is already playing on the held camera")
+	// ErrClipInvalid is audio the talkback track cannot play.
+	ErrClipInvalid = errors.New("the clip is not playable Ogg/Opus audio")
+)
+
 // Stream is one open camera session.
 type Stream interface {
 	// Latest returns the newest frame as JPEG and when it arrived.
 	Latest(ctx context.Context, maxAge time.Duration) ([]byte, time.Time, error)
+	// Play starts an Ogg/Opus clip on the talkback track and returns its length.
+	Play(ctx context.Context, ogg []byte) (time.Duration, error)
 	// Done is closed when the stream stops for any reason.
 	Done() <-chan struct{}
 	Close(ctx context.Context) error
@@ -64,6 +75,9 @@ type Status struct {
 type Service interface {
 	holds.Session
 	Snapshot(ctx context.Context, holdID string) (Frame, error)
+	// PlayAudio starts an Ogg/Opus clip on the held camera's talkback track
+	// and returns its length; the clip plays on after it returns.
+	PlayAudio(ctx context.Context, holdID string, ogg []byte) (time.Duration, error)
 	Status(holdID string) (Status, bool)
 }
 
@@ -192,20 +206,45 @@ func (s *service) Close(ctx context.Context, holdID string, _ holds.Ending) erro
 	return stream.Close(ctx)
 }
 
-func (s *service) Snapshot(ctx context.Context, holdID string) (Frame, error) {
+// liveStream returns the hold's current stream, or camera_unavailable.
+func (s *service) liveStream(holdID string) (Stream, error) {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	h := s.holds[holdID]
 	if h == nil {
-		s.mu.Unlock()
-		return Frame{}, unavailable("hold " + holdID + " has no camera")
+		return nil, unavailable("hold " + holdID + " has no camera")
 	}
 	if !h.status.Live {
-		reason := h.status.LostReason
-		s.mu.Unlock()
-		return Frame{}, unavailable("the held camera stopped (" + reason + "); release the hold and hold the camera again")
+		return nil, unavailable("the held camera stopped (" + h.status.LostReason + "); release the hold and hold the camera again")
 	}
-	stream := h.stream
-	s.mu.Unlock()
+	return h.stream, nil
+}
+
+func (s *service) PlayAudio(ctx context.Context, holdID string, ogg []byte) (time.Duration, error) {
+	stream, err := s.liveStream(holdID)
+	if err != nil {
+		return 0, err
+	}
+	length, err := stream.Play(ctx, ogg)
+	switch {
+	case err == nil:
+		return length, nil
+	case errors.Is(err, ErrTalkbackBusy):
+		return 0, &holds.Error{Code: holds.CodeTalkbackBusy, Message: "a clip is already playing on the held camera; send the next one when it ends"}
+	case errors.Is(err, ErrClipInvalid):
+		return 0, &holds.Error{Code: holds.CodeInvalidRequest, Message: err.Error()}
+	case ctx.Err() != nil:
+		return 0, ctx.Err()
+	default:
+		return 0, unavailable("play on the held camera: " + err.Error())
+	}
+}
+
+func (s *service) Snapshot(ctx context.Context, holdID string) (Frame, error) {
+	stream, err := s.liveStream(holdID)
+	if err != nil {
+		return Frame{}, err
+	}
 	jpeg, at, err := stream.Latest(ctx, FreshFrame)
 	if err != nil {
 		if ctx.Err() != nil {

@@ -44,7 +44,8 @@ var providerCodeExits = map[string]int{
 // reply carries them. The host's hold routes also use hold_not_found (a 404
 // on release), which keeps its own exit code.
 var messageOnlyExits = map[string]int{
-	"hold_not_found": ExitHold,
+	"hold_not_found":  ExitHold,
+	"invalid_request": ExitInvalid,
 }
 
 // InvalidArgumentError marks a flag or argument mistake; it exits with ExitInvalid.

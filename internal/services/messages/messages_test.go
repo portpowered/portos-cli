@@ -2,6 +2,7 @@ package messages
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"testing"
 	"time"
@@ -49,14 +50,25 @@ func request(name string) *api.CreateMessageRequest {
 }
 
 type fakeSnapshots struct {
-	holdID string
-	jpeg   []byte
-	err    error
+	holdID  string
+	jpeg    []byte
+	err     error
+	played  []byte
+	playErr error
 }
 
 func (f *fakeSnapshots) Snapshot(_ context.Context, holdID string) ([]byte, time.Time, error) {
 	f.holdID = holdID
 	return f.jpeg, time.Unix(2000, 0), f.err
+}
+
+func (f *fakeSnapshots) PlayAudio(_ context.Context, holdID string, ogg []byte) (time.Duration, error) {
+	f.holdID = holdID
+	if f.playErr != nil {
+		return 0, f.playErr
+	}
+	f.played = ogg
+	return time.Second, nil
 }
 
 func newService(auth *fakeAuth, mover *fakeMover) Service {
@@ -178,4 +190,51 @@ func TestDispatchSnapshotRefusals(t *testing.T) {
 
 func newServiceWithSnapshots(auth *fakeAuth, snaps *fakeSnapshots) Service {
 	return New(auth, &fakeMover{}, snaps, clock.NewFake(time.Unix(1000, 0)))
+}
+
+func playAudioRequest(name string, audio map[string]any) *api.CreateMessageRequest {
+	return &api.CreateMessageRequest{
+		Target:  api.CreateMessageTarget{Type: api.EndpointTarget, Id: "ep/1"},
+		Message: api.Message{Header: &api.MessageHeader{Namespace: api.INTERFACE_PORTOS_MEDIA_PLAYER, Name: name, Version: "1.0"}, Body: map[string]any{"audio": audio}},
+	}
+}
+
+func TestDispatchPlaysAClipOnTheHeldCamera(t *testing.T) {
+	auth := &fakeAuth{}
+	camera := &fakeSnapshots{}
+	clip := []byte("OggS clip")
+	reply, err := newServiceWithSnapshots(auth, camera).Dispatch(t.Context(), "the-lease",
+		playAudioRequest("play-audio", map[string]any{"data": base64.StdEncoding.EncodeToString(clip), "mimeType": "audio/ogg; codecs=opus"}))
+	require.NoError(t, err)
+	require.Equal(t, holds.KindCamera, auth.kind)
+	require.Equal(t, api.SUCCEEDED, reply.Status)
+	require.Equal(t, clip, camera.played)
+	require.Equal(t, api.INTERFACE_PORTOS_MEDIA_PLAYER_PLAYBACK_RESULT, reply.Results[0].Message.Header.Name)
+}
+
+func TestDispatchPlayAudioRefusals(t *testing.T) {
+	ogg := base64.StdEncoding.EncodeToString([]byte("OggS"))
+	cases := []struct {
+		name    string
+		message string
+		audio   map[string]any
+		camera  *fakeSnapshots
+		code    string
+		exit    int
+	}{
+		{"a URL", "play-audio", map[string]any{"url": "https://media.example.com/a.mp3"}, &fakeSnapshots{}, holds.CodeInvalidRequest, exitcode.ExitInvalid},
+		{"not Ogg", "play-audio", map[string]any{"data": ogg, "mimeType": "audio/mpeg"}, &fakeSnapshots{}, holds.CodeInvalidRequest, exitcode.ExitInvalid},
+		{"busy", "play-audio", map[string]any{"data": ogg, "mimeType": "audio/ogg"}, &fakeSnapshots{playErr: &holds.Error{Code: holds.CodeTalkbackBusy}}, holds.CodeTalkbackBusy, exitcode.ExitBusy},
+		{"camera lost", "play-audio", map[string]any{"data": ogg, "mimeType": "audio/ogg"}, &fakeSnapshots{playErr: &holds.Error{Code: holds.CodeCameraUnavailable}}, holds.CodeCameraUnavailable, exitcode.ExitCamera},
+		{"another media message", "pause", nil, &fakeSnapshots{}, holds.CodeNotServedByHold, exitcode.ExitFailure},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			reply, err := newServiceWithSnapshots(&fakeAuth{}, tc.camera).Dispatch(t.Context(), "lease", playAudioRequest(tc.message, tc.audio))
+			require.NoError(t, err)
+			require.Equal(t, tc.code, exitcode.ProviderCode(reply))
+			require.Equal(t, tc.exit, exitcode.Code(&apiclient.MessageRequestFailed{Request: reply}))
+			require.Nil(t, tc.camera.played)
+		})
+	}
 }

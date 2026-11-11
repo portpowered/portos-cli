@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"sync/atomic"
@@ -24,12 +25,30 @@ var _ camera.Opener = (*heldCameraOpener)(nil)
 
 func (o *heldCameraOpener) Open(ctx context.Context, endpointID string, lifetime time.Duration) (camera.Stream, error) {
 	n := o.opened.Add(1)
-	return o.recorder.HoldCamera(ctx, commands.HeldCameraParams{
+	held, err := o.recorder.HoldCamera(ctx, commands.HeldCameraParams{
 		EndpointID:    endpointID,
 		SessionDomain: o.sessionDomain(),
 		SessionID:     fmt.Sprintf("hold-camera-%d-%d", time.Now().UnixNano(), n),
 		Lifetime:      lifetime,
 	})
+	if err != nil {
+		return nil, err
+	}
+	return heldStream{held}, nil
+}
+
+// heldStream gives the held camera's talkback errors the camera service's meaning.
+type heldStream struct{ *commands.HeldCamera }
+
+func (s heldStream) Play(ctx context.Context, ogg []byte) (time.Duration, error) {
+	length, err := s.HeldCamera.Play(ctx, ogg)
+	switch {
+	case errors.Is(err, commands.ErrTalkbackBusy):
+		return 0, camera.ErrTalkbackBusy
+	case errors.Is(err, commands.ErrClipInvalid):
+		return 0, fmt.Errorf("%w: %v", camera.ErrClipInvalid, err)
+	}
+	return length, err
 }
 
 // sessionDomain is the API host, as the snapshot and record commands use.

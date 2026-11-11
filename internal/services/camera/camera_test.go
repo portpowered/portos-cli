@@ -3,6 +3,7 @@ package camera
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -19,10 +20,21 @@ type fakeStream struct {
 	closed bool
 	frame  []byte
 	err    error
+	play   error
+	played [][]byte
 }
 
 func (f *fakeStream) Latest(context.Context, time.Duration) ([]byte, time.Time, error) {
 	return f.frame, time.Unix(int64(f.id), 0), f.err
+}
+func (f *fakeStream) Play(_ context.Context, ogg []byte) (time.Duration, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.play != nil {
+		return 0, f.play
+	}
+	f.played = append(f.played, ogg)
+	return time.Second, nil
 }
 func (f *fakeStream) Done() <-chan struct{} { return f.done }
 func (f *fakeStream) Close(context.Context) error {
@@ -201,5 +213,49 @@ func TestAFrameErrorIsCameraUnavailable(t *testing.T) {
 	}
 	if _, err := svc.Snapshot(t.Context(), "hold-2"); !IsUnavailable(err) {
 		t.Fatalf("Snapshot of an unknown hold = %v, want camera_unavailable", err)
+	}
+}
+
+func TestPlayAudioUsesTheHeldStream(t *testing.T) {
+	opener, _, svc, _ := newTestService(t)
+	if err := svc.Open(t.Context(), "hold-1", "ep"); err != nil {
+		t.Fatal(err)
+	}
+	length, err := svc.PlayAudio(t.Context(), "hold-1", []byte("OggS"))
+	if err != nil || length != time.Second {
+		t.Fatalf("PlayAudio = %s, %v", length, err)
+	}
+	if got := opener.stream(0).played; len(got) != 1 {
+		t.Fatalf("the stream played %d clips, want 1", len(got))
+	}
+}
+
+func TestPlayAudioRefusals(t *testing.T) {
+	cases := []struct {
+		name string
+		play error
+		code string
+	}{
+		{"busy", ErrTalkbackBusy, holds.CodeTalkbackBusy},
+		{"invalid clip", fmt.Errorf("%w: it holds no audio", ErrClipInvalid), holds.CodeInvalidRequest},
+		{"broken track", errors.New("write talkback packet: closed"), holds.CodeCameraUnavailable},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			opener, _, svc, _ := newTestService(t)
+			if err := svc.Open(t.Context(), "hold-1", "ep"); err != nil {
+				t.Fatal(err)
+			}
+			opener.stream(0).play = tc.play
+			_, err := svc.PlayAudio(t.Context(), "hold-1", []byte("OggS"))
+			var holdErr *holds.Error
+			if !errors.As(err, &holdErr) || holdErr.Code != tc.code {
+				t.Fatalf("PlayAudio = %v, want %s", err, tc.code)
+			}
+		})
+	}
+	_, _, svc, _ := newTestService(t)
+	if _, err := svc.PlayAudio(t.Context(), "hold-9", nil); !IsUnavailable(err) {
+		t.Fatalf("PlayAudio with no camera = %v, want camera_unavailable", err)
 	}
 }
