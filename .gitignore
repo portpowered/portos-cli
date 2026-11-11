@@ -13,4 +13,5 @@ test_data
 *.crt
 __debug_bin*
 
-port
+# The built binary at the module root, not the cmd/port source directory.
+/port
