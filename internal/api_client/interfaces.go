@@ -12,6 +12,9 @@ type Client interface {
 	// Endpoints returns the endpoints API client
 	Endpoints() EndpointsClient
 
+	// Groups returns the endpoint groups API client
+	Groups() GroupsClient
+
 	// Messages returns the messages API client
 	Messages() MessagesClient
 
@@ -57,6 +60,13 @@ type EndpointsClient interface {
 	// GetByIDWithExpand queries for an endpoint by its full ID and requested expansion set.
 	// id: The full endpoint identifier (e.g. port1/principals/abc/endpoints/xyz)
 	GetByIDWithExpand(ctx context.Context, id string, expand string, forceDeviceAttributeQuery bool) (*api.EndpointQueryResponse, error)
+}
+
+// GroupsClient reads endpoint groups (rooms, floors, zones and customer groups).
+type GroupsClient interface {
+	// Enumerate lists one page of the caller's enabled endpoint groups. expand passes the API's
+	// expansion tokens, such as interfaces.attributes for each group route's stored attributes.
+	Enumerate(ctx context.Context, nextToken *string, maxResults *int, expand []string) (*api.EnumerateEndpointGroupsResponse, error)
 }
 
 // MessagesClient defines the interface for message operations

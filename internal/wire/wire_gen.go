@@ -54,6 +54,9 @@ func InitializeCLI() (*cli.CLIApp, error) {
 	endpointListCommand := cli.NewEndpointListCommand(commandsEndpointCommand)
 	endpointShowCommand := cli.NewEndpointShowCommand(commandsEndpointCommand)
 	endpointAttributeCommand := cli.NewEndpointAttributeCommand(commandsEndpointCommand)
+	groupCommand := cli.NewGroupCommand()
+	commandsGroupCommand := commands.NewGroupCommand(apiClient, formatter)
+	groupListCommand := cli.NewGroupListCommand(commandsGroupCommand)
 	resolver := transport.NewResolver(managerProvider, apiClient, globalFlags)
 	messageCommand := commands.NewMessageCommand(apiClient, resolver, formatter, loggerRef, managerProvider)
 	cliMessageCommand := cli.NewMessageCommand(messageCommand)
@@ -84,7 +87,7 @@ func InitializeCLI() (*cli.CLIApp, error) {
 	serveCommand := commands.NewServeCommand(apiClient, formatter, service, loggerRef)
 	cliServeCommand := cli.NewServeCommand(serveCommand)
 	hostCommand := cli.NewHostCommand(managerProvider, apiClient, tokenStorage)
-	router := cli.NewRouter(loggerRef, globalFlags, rootCommand, cliInitCommand, cliStatusCommand, authCommand, authSetTokenCommand, authLoginCommand, endpointCommand, endpointListCommand, endpointShowCommand, endpointAttributeCommand, cliMessageCommand, cliSnapshotCommand, cliRecordCommand, moveCliCommand, listCommandsCliCommand, rulesCommand, listRulesCommand, createRuleCommand, deleteRuleCommand, establishGroupCommand, establishGrantCommand, establishRevokeCommand, establishCheckCommand, establishListCommand, sessionGroupCommand, sessionHoldCommand, sessionStatusCommand, sessionReleaseCommand, cliServeCommand, hostCommand)
+	router := cli.NewRouter(loggerRef, globalFlags, rootCommand, cliInitCommand, cliStatusCommand, authCommand, authSetTokenCommand, authLoginCommand, endpointCommand, endpointListCommand, endpointShowCommand, endpointAttributeCommand, groupCommand, groupListCommand, cliMessageCommand, cliSnapshotCommand, cliRecordCommand, moveCliCommand, listCommandsCliCommand, rulesCommand, listRulesCommand, createRuleCommand, deleteRuleCommand, establishGroupCommand, establishGrantCommand, establishRevokeCommand, establishCheckCommand, establishListCommand, sessionGroupCommand, sessionHoldCommand, sessionStatusCommand, sessionReleaseCommand, cliServeCommand, hostCommand)
 	cliApp := cli.NewCLIApp(managerProvider, loggerRef, service, apiClient, router, formatter)
 	return cliApp, nil
 }
@@ -117,6 +120,9 @@ func InitializeMockCLI(httpClient *http.Client, cliWriter output.Writer) (*cli.C
 	endpointListCommand := cli.NewEndpointListCommand(commandsEndpointCommand)
 	endpointShowCommand := cli.NewEndpointShowCommand(commandsEndpointCommand)
 	endpointAttributeCommand := cli.NewEndpointAttributeCommand(commandsEndpointCommand)
+	groupCommand := cli.NewGroupCommand()
+	commandsGroupCommand := commands.NewGroupCommand(client, formatter)
+	groupListCommand := cli.NewGroupListCommand(commandsGroupCommand)
 	resolver := transport.NewResolver(managerProvider, client, globalFlags)
 	messageCommand := commands.NewMessageCommand(client, resolver, formatter, loggerRef, managerProvider)
 	cliMessageCommand := cli.NewMessageCommand(messageCommand)
@@ -147,7 +153,7 @@ func InitializeMockCLI(httpClient *http.Client, cliWriter output.Writer) (*cli.C
 	serveCommand := commands.NewServeCommand(client, formatter, service, loggerRef)
 	cliServeCommand := cli.NewServeCommand(serveCommand)
 	hostCommand := cli.NewHostCommand(managerProvider, client, tokenStorage)
-	router := cli.NewRouter(loggerRef, globalFlags, rootCommand, cliInitCommand, cliStatusCommand, authCommand, authSetTokenCommand, authLoginCommand, endpointCommand, endpointListCommand, endpointShowCommand, endpointAttributeCommand, cliMessageCommand, cliSnapshotCommand, cliRecordCommand, moveCliCommand, listCommandsCliCommand, rulesCommand, listRulesCommand, createRuleCommand, deleteRuleCommand, establishGroupCommand, establishGrantCommand, establishRevokeCommand, establishCheckCommand, establishListCommand, sessionGroupCommand, sessionHoldCommand, sessionStatusCommand, sessionReleaseCommand, cliServeCommand, hostCommand)
+	router := cli.NewRouter(loggerRef, globalFlags, rootCommand, cliInitCommand, cliStatusCommand, authCommand, authSetTokenCommand, authLoginCommand, endpointCommand, endpointListCommand, endpointShowCommand, endpointAttributeCommand, groupCommand, groupListCommand, cliMessageCommand, cliSnapshotCommand, cliRecordCommand, moveCliCommand, listCommandsCliCommand, rulesCommand, listRulesCommand, createRuleCommand, deleteRuleCommand, establishGroupCommand, establishGrantCommand, establishRevokeCommand, establishCheckCommand, establishListCommand, sessionGroupCommand, sessionHoldCommand, sessionStatusCommand, sessionReleaseCommand, cliServeCommand, hostCommand)
 	cliApp := cli.NewCLIApp(managerProvider, loggerRef, service, client, router, formatter)
 	return cliApp, nil
 }
@@ -169,9 +175,9 @@ var AuthSet = wire.NewSet(auth.NewTokenStorage, auth.NewDeviceAuthClient, auth.N
 // FlagsSet provides global flags dependencies
 var FlagsSet = wire.NewSet(flags.NewGlobalFlags)
 
-var CommandsSet = wire.NewSet(commands.NewRecorder, commands.NewInitCommand, commands.NewStatusCommand, commands.NewAuthCommand, commands.NewEndpointCommand, commands.NewMessageCommand, commands.NewSnapshotCommand, commands.NewRecordCommand, commands.NewMoveCommand, commands.NewRulesCommand, commands.NewEstablishCommand, commands.NewOperatorAuthCommand, commands.NewServeCommand, commands.NewSessionCommand)
+var CommandsSet = wire.NewSet(commands.NewRecorder, commands.NewInitCommand, commands.NewStatusCommand, commands.NewAuthCommand, commands.NewEndpointCommand, commands.NewGroupCommand, commands.NewMessageCommand, commands.NewSnapshotCommand, commands.NewRecordCommand, commands.NewMoveCommand, commands.NewRulesCommand, commands.NewEstablishCommand, commands.NewOperatorAuthCommand, commands.NewServeCommand, commands.NewSessionCommand)
 
-var CliSet = wire.NewSet(cli.NewRouter, cli.NewInitCommand, cli.NewStatusCommand, cli.NewAuthCommand, cli.NewAuthSetTokenCommand, cli.NewAuthLoginCommand, cli.NewEndpointCommand, cli.NewEndpointListCommand, cli.NewEndpointShowCommand, cli.NewEndpointAttributeCommand, cli.NewMessageCommand, cli.NewSnapshotCommand, cli.NewRecordCommand, cli.NewMoveCliCommand, cli.NewListCommandsCliCommand, cli.NewRulesCommand, cli.NewListRulesCommand, cli.NewCreateRuleCommand, cli.NewDeleteRuleCommand, cli.NewEstablishGroupCommand, cli.NewEstablishGrantCommand, cli.NewEstablishRevokeCommand, cli.NewEstablishCheckCommand, cli.NewEstablishListCommand, cli.NewSessionGroupCommand, cli.NewSessionHoldCommand, cli.NewSessionStatusCommand, cli.NewSessionReleaseCommand, cli.NewServeCommand, cli.NewHostCommand, cli.NewRootCommand)
+var CliSet = wire.NewSet(cli.NewRouter, cli.NewInitCommand, cli.NewStatusCommand, cli.NewAuthCommand, cli.NewAuthSetTokenCommand, cli.NewAuthLoginCommand, cli.NewEndpointCommand, cli.NewEndpointListCommand, cli.NewEndpointShowCommand, cli.NewEndpointAttributeCommand, cli.NewGroupCommand, cli.NewGroupListCommand, cli.NewMessageCommand, cli.NewSnapshotCommand, cli.NewRecordCommand, cli.NewMoveCliCommand, cli.NewListCommandsCliCommand, cli.NewRulesCommand, cli.NewListRulesCommand, cli.NewCreateRuleCommand, cli.NewDeleteRuleCommand, cli.NewEstablishGroupCommand, cli.NewEstablishGrantCommand, cli.NewEstablishRevokeCommand, cli.NewEstablishCheckCommand, cli.NewEstablishListCommand, cli.NewSessionGroupCommand, cli.NewSessionHoldCommand, cli.NewSessionStatusCommand, cli.NewSessionReleaseCommand, cli.NewServeCommand, cli.NewHostCommand, cli.NewRootCommand)
 
 // TransportSet provides the resolver that picks cloud or session host per message.
 var TransportSet = wire.NewSet(transport.NewResolver)

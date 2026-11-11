@@ -400,6 +400,77 @@ var Commands = map[string]CommandDoc{
 			},
 		},
 	},
+	"port.group": {
+		ID: "port.group",
+		Path: []string{
+			"port",
+			"group",
+		},
+		Summary:            "Endpoint group commands",
+		Description:        "List endpoint groups, such as the rooms, floors and zones providers report and the groups you made.",
+		Category:           "groups",
+		CanonicalReference: "api/cli/commands.yaml",
+		Arguments:          []ArgumentDoc{},
+		Flags:              []FlagDoc{},
+		Examples: []ExampleDoc{
+			{
+				Description: "Show group subcommands.",
+				Invocation:  "port group --help",
+				Output:      "",
+			},
+		},
+	},
+	"port.group.list": {
+		ID: "port.group.list",
+		Path: []string{
+			"port",
+			"group",
+			"list",
+		},
+		Summary:            "List endpoint groups",
+		Description:        "List one page of your enabled endpoint groups with their members and controllers. With --json the groups print as the API returns them; --expand interfaces.attributes adds each group route's stored attributes, such as a room's spatial/geometry shape and the map frame it is in.",
+		Category:           "groups",
+		CanonicalReference: "api/cli/commands.yaml",
+		Arguments:          []ArgumentDoc{},
+		Flags: []FlagDoc{
+			{
+				Name:        "max-results",
+				Shorthand:   "",
+				Type:        "string",
+				Default:     "",
+				Required:    false,
+				Description: "Maximum number of results to return.",
+			},
+			{
+				Name:        "next-token",
+				Shorthand:   "",
+				Type:        "string",
+				Default:     "",
+				Required:    false,
+				Description: "Token for the next page, from the previous page's next_token.",
+			},
+			{
+				Name:        "expand",
+				Shorthand:   "",
+				Type:        "string",
+				Default:     "",
+				Required:    false,
+				Description: "Expansion tokens, comma separated, such as interfaces.attributes.",
+			},
+		},
+		Examples: []ExampleDoc{
+			{
+				Description: "List your groups.",
+				Invocation:  "port group list",
+				Output:      "",
+			},
+			{
+				Description: "Read room shapes for a map.",
+				Invocation:  "port group list --expand interfaces.attributes --json",
+				Output:      "",
+			},
+		},
+	},
 	"port.init": {
 		ID: "port.init",
 		Path: []string{

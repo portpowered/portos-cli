@@ -78,7 +78,22 @@ class FakePort:
                 raise NotCarriedOut(10, "the robot did not move as asked")
             return {"results": [{"message": {"body": {"pose": self._pose(), "distanceMetres": moved,
                                                        "turnedDegrees": turned}}}]}
+        if args[:2] == ["group", "list"]:
+            pages = self.group_pages()
+            return pages[1] if "--next-token" in args else pages[0]
         raise AssertionError("unexpected port call %s" % args)
+
+    def group_pages(self):
+        spatial = "port1/systems/zero/capability-interfaces/spatial"
+        square = {"type": "MultiPolygon", "coordinates": [[[[0, 0], [2, 0], [2, 2], [0, 2], [0, 0]]]]}
+        hall = {"id": "g/hall", "name": {"type": "PLAIN", "value": "Hall"}, "attributes": [
+            {"namespace": spatial, "name": "geometry", "groupRouteId": "gr/old"},
+            {"namespace": spatial, "name": "geometry", "groupRouteId": "gr/hall",
+             "value": {"relativeToGroupRouteId": "map:0", "shape": square}}]}
+        other_map = {"id": "g/upstairs", "name": {"type": "PLAIN", "value": "Upstairs"}, "attributes": [
+            {"namespace": spatial, "name": "geometry", "value": {"relativeToGroupRouteId": "map:1", "shape": square}}]}
+        speakers = {"id": "g/speakers", "name": {"type": "PLAIN", "value": "Speakers"}}
+        return [{"groups": [hall, speakers], "next_token": "page2"}, {"groups": [other_map]}]
 
     def run(self, args):
         self.calls.append(list(args))
@@ -179,6 +194,30 @@ class Holding(unittest.TestCase):
         failure = _error(13, json.dumps({"error": {"message": "hold_lease_required: no lease"}}), "")
         self.assertIsInstance(failure, HoldProblem)
         self.assertEqual(failure.detail, "hold_lease_required: no lease")
+
+
+class Mapping(unittest.TestCase):
+    def test_rooms_are_the_groups_in_the_pose_frame_across_pages(self):
+        port = FakePort()
+        robot = Robot("vacuum", port=port, log=io.StringIO())
+        rooms = robot.rooms()
+        self.assertEqual([room["name"] for room in rooms], ["Hall"])
+        self.assertEqual(rooms[0]["shape"]["type"], "MultiPolygon")
+        listed = [c for c in port.calls if c[:2] == ["group", "list"]]
+        self.assertEqual(len(listed), 2, "follows next_token to the second page")
+        self.assertIn("interfaces.attributes", listed[0])
+        self.assertEqual([room["name"] for room in robot.rooms("map:1")], ["Upstairs"])
+
+    def test_scene_renders(self):
+        from render_map import render, ROBOT
+        port = FakePort(x=1.0, y=1.0, heading=0)
+        robot = Robot("vacuum", port=port, log=io.StringIO())
+        robot.pose()
+        scene = robot.scene(places=[{"name": "Dock", "x": 0.5, "y": 0.5}])
+        self.assertEqual(scene["robot"], {"x": 1.0, "y": 1.0, "heading": 0})
+        self.assertEqual(scene["trail"], [[1.0, 1.0]])
+        canvas = render(json.loads(json.dumps(scene)), scale=10, margin=0)
+        self.assertEqual(canvas.pixels[3 * (10 * canvas.width + 10):3 * (10 * canvas.width + 10) + 3], bytearray(ROBOT))
 
 
 class Rendering(unittest.TestCase):

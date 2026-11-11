@@ -403,6 +403,33 @@ class Robot:
                 self.turn_by(360.0 / steps)
         return frames
 
+    # Mapping.
+
+    def groups(self) -> List[dict]:
+        """Every group with its route attributes, one `port group list` call per page."""
+        groups, token = [], None
+        while True:
+            args = ["group", "list", "--expand", "interfaces.attributes"] + (["--next-token", token] if token else [])
+            page = self.port.json(args)
+            groups.extend(page.get("groups") or [])
+            token = page.get("next_token")
+            if not token:
+                return groups
+
+    def rooms(self, frame: str = "") -> List[dict]:
+        """The rooms of the robot's map ({id, name, shape}), in the frame of its pose unless you name one."""
+        return rooms_in_frame(self.groups(), frame or self.where().frame)
+
+    def scene(self, places: Sequence[dict] = (), frame: str = "") -> dict:
+        """A render_map.py scene: the rooms of the robot's map, its trail and where it is now."""
+        pose = self.where()
+        return {
+            "rooms": self.rooms(frame or pose.frame),
+            "trail": [list(point) for point in self.trail],
+            "robot": {"x": pose.x, "y": pose.y, "heading": pose.heading},
+            "places": list(places),
+        }
+
     # Handing back.
 
     def checkpoint(self, name: str, **data) -> dict:
@@ -412,6 +439,22 @@ class Robot:
         record.setdefault("pose", _plain(self.where()))
         print(json.dumps(record), flush=True)
         return record
+
+
+def rooms_in_frame(groups: Sequence[dict], frame: str) -> List[dict]:
+    """Room shapes from `port group list --expand interfaces.attributes --json` groups: each group
+    whose spatial/geometry is in `frame` (the pose's relativeToGroupRouteId), as {id, name, shape}.
+    Groups of other maps, and routes that never reported a shape, are left out."""
+    rooms = []
+    for group in groups:
+        for attribute in group.get("attributes") or []:
+            value = attribute.get("value") or {}
+            if (attribute.get("name") == "geometry" and attribute.get("namespace", "").endswith("/spatial")
+                    and value.get("relativeToGroupRouteId") == frame and value.get("shape")):
+                rooms.append({"id": group["id"], "name": (group.get("name") or {}).get("value", ""),
+                              "shape": value["shape"]})
+                break
+    return rooms
 
 
 def _move_body(out: dict) -> dict:

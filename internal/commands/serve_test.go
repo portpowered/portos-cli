@@ -80,6 +80,7 @@ type mockAPIClient struct {
 }
 
 func (m *mockAPIClient) Endpoints() apiclient.EndpointsClient  { return nil }
+func (m *mockAPIClient) Groups() apiclient.GroupsClient        { return nil }
 func (m *mockAPIClient) Messages() apiclient.MessagesClient    { return nil }
 func (m *mockAPIClient) Relay() apiclient.RelayClient          { return nil }
 func (m *mockAPIClient) Rules() apiclient.RulesClient          { return nil }

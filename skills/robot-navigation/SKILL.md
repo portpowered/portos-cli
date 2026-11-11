@@ -48,6 +48,7 @@ cp -rn "portos-cli-${VERSION#v}/skills/robot-navigation/tricks" ~/robot/
 | `port message move <robot> "rotate 90, forward 1m"` | The same moves from a short grammar, for one-off use |
 | `port endpoint attribute <robot> spatial/pose --force` | Reads the pose from the robot |
 | `port message snapshot <robot> --output frame.jpg` | Saves the camera's current frame |
+| `port group list --expand interfaces.attributes --json` | Your groups; each room's `spatial/geometry` attribute holds its shape and map frame. Follow `next_token` for more pages |
 
 A move: `velocity` in m/s (negative reverses), `omega` in rad/s (positive turns left), `duration` in whole seconds as milliseconds (1000 to 5000 on the S8). Distance is velocity times duration; the turn is omega times duration. The robot rejects a drive under 5 cm and a turn in place under 5 degrees. The pose is metres in the map's frame with heading 0 along +x, growing counter-clockwise.
 
@@ -85,6 +86,7 @@ with Robot("<robot endpoint id>") as robot:   # holds; leaving the block release
 - `forward(metres)`, `drive_to(x, y, tolerance=0.10, leg=1.0)`: `drive_to` re-aims from the measured pose every leg, raises `NotCarriedOut` on a stall and `NotArrived` when it runs out of moves.
 - `pose()` reads from the robot; `where()` is the newest pose a reply gave. `trail` is every pose seen.
 - `snapshot(path)`, `look_around(step_degrees, directory)`, `checkpoint(name, **data)`.
+- `rooms()` is the rooms of the robot's map (`id`, `name`, `shape`), chosen by the pose's frame; `scene(places)` adds the trail and the robot for `render_map.py`. Neither needs a hold.
 - When `PORTOS_LEASE` is already set, `Robot` uses that hold and leaves it open; whoever opens a hold releases it. So you can hold once, run several tricks under the same lease, judge their checkpoints between them, and release at the end.
 
 ## Tricks
@@ -120,11 +122,17 @@ Every place belongs to a map frame. Before using one, check that the robot's pos
 
 `render_map.py` draws rooms, holes, a metre grid, the robot and its heading, the trail and your places to a PNG, with only the standard library:
 
+```python
+robot = Robot("<robot endpoint id>")              # no hold needed to draw
+scene = robot.scene(places=[{"name": "Sofa", "x": 3.0, "y": 1.5}])
+json.dump(scene, open("scene.json", "w"))
+```
+
 ```bash
 python3 ~/robot/tricks/lib/render_map.py scene.json map.png --around 3.2,1.5 --radius 3
 ```
 
-`scene.json` holds `rooms` (`name` and the GeoJSON `shape` from each room's `spatial/geometry` attribute), `trail` (`[[x, y], ...]` from `robot.trail`), `robot` (`x`, `y`, `heading`) and `places`. Look at the picture when you plan a route or explain where the robot is.
+`scene.json` holds `rooms` (`name` and the GeoJSON `shape` from each room's `spatial/geometry` attribute), `trail` (`[[x, y], ...]` from `robot.trail`), `robot` (`x`, `y`, `heading`) and `places`. A room's shape lives on its group routes; only the route whose `relativeToGroupRouteId` matches the pose's is in the robot's map. Shapes change only when the robot remaps, so keep a copy in `~/robot/house/geometry/`. Look at the picture when you plan a route or explain where the robot is.
 
 ## When things go wrong
 

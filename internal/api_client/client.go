@@ -23,6 +23,7 @@ type ClientImpl struct {
 	authService    auth.Service
 	logger         *logging.LoggerRef
 	endpoints      *EndpointsClientImpl
+	groups         *GroupsClientImpl
 	messages       *MessagesClientImpl
 	rules          *RulesClientImpl
 	relay          *RelayClientImpl
@@ -49,6 +50,10 @@ func NewClient(
 	}
 
 	client.endpoints = &EndpointsClientImpl{
+		client: client,
+	}
+
+	client.groups = &GroupsClientImpl{
 		client: client,
 	}
 
@@ -91,6 +96,11 @@ func (c *ClientImpl) ensureInited() error {
 // Endpoints returns the endpoints API client
 func (c *ClientImpl) Endpoints() EndpointsClient {
 	return c.endpoints
+}
+
+// Groups returns the endpoint groups API client
+func (c *ClientImpl) Groups() GroupsClient {
+	return c.groups
 }
 
 // Messages returns the messages API client

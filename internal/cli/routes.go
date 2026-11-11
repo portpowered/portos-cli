@@ -26,6 +26,9 @@ type Router struct {
 	EndpointShowCommand      *EndpointShowCommand
 	EndpointAttributeCommand *EndpointAttributeCommand
 
+	GroupCommand     *GroupCommand
+	GroupListCommand *GroupListCommand
+
 	MessageCommand         *MessageCommand
 	SnapshotCommand        *SnapshotCommand
 	RecordCommand          *RecordCommand
@@ -66,6 +69,8 @@ func NewRouter(
 	endpointListCommand *EndpointListCommand,
 	endpointShowCommand *EndpointShowCommand,
 	endpointAttributeCommand *EndpointAttributeCommand,
+	groupCommand *GroupCommand,
+	groupListCommand *GroupListCommand,
 	messageCommand *MessageCommand,
 	snapshotCommand *SnapshotCommand,
 	recordCommand *RecordCommand,
@@ -100,6 +105,8 @@ func NewRouter(
 		EndpointListCommand:      endpointListCommand,
 		EndpointShowCommand:      endpointShowCommand,
 		EndpointAttributeCommand: endpointAttributeCommand,
+		GroupCommand:             groupCommand,
+		GroupListCommand:         groupListCommand,
 		MessageCommand:           messageCommand,
 		SnapshotCommand:          snapshotCommand,
 		RecordCommand:            recordCommand,
@@ -142,6 +149,10 @@ func (c Router) BuildRoot() *cobra.Command {
 	endpointGroup.AddCommand(NewPath("show <endpoint-id>", c.EndpointShowCommand.Generate()))
 	endpointGroup.AddCommand(NewPath("attribute <endpoint-id> <interface>/<attribute>", c.EndpointAttributeCommand.Generate()))
 	root.AddCommand(endpointGroup)
+
+	groupGroup := NewPath("group", c.GroupCommand.Generate())
+	groupGroup.AddCommand(NewPath("list", c.GroupListCommand.Generate()))
+	root.AddCommand(groupGroup)
 
 	msgGroup := NewPath("message", c.MessageCommand.Generate())
 	msgGroup.AddCommand(NewPath("snapshot <endpoint-id> [output-path]", c.SnapshotCommand.Generate()))

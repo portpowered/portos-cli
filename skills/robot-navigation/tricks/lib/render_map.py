@@ -145,7 +145,9 @@ def render(scene, scale=60.0, around=None, radius=3.0, margin=0.5):
         cx = sum(p[0] for p in outer) / len(outer)
         cy = sum(p[1] for p in outer) / len(outer)
         x, y = px(cx, cy)
-        canvas.text(int(x) - 4 * len(room.get("name", "")), int(y) - 5, room.get("name", ""), TEXT)
+        name = room.get("name", "")
+        left = min(max(2, int(x) - 4 * len(name)), max(2, canvas.width - 8 * len(name) - 2))
+        canvas.text(left, int(y) - 5, name, TEXT)
     trail = [px(*p[:2]) for p in scene.get("trail", [])]
     for a, b in zip(trail, trail[1:]):
         canvas.line(*a, *b, TRAIL, width=2)

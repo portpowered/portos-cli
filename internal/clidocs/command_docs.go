@@ -2,6 +2,8 @@ package clidocs
 
 const EndpointListID = "port.endpoint.list"
 const EndpointAttributeID = "port.endpoint.attribute"
+const GroupID = "port.group"
+const GroupListID = "port.group.list"
 
 type CommandDoc struct {
 	ID                 string
