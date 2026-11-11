@@ -1,0 +1,14 @@
+x-namespace: port1/systems/zero/capability-interfaces/media-player
+x-name: play
+x-version: '1.0'
+x-type: message
+description: Schema for audio play by id message payload validation
+type: object
+properties:
+  audioMediaId:
+    type: string
+    description: ID of the audio media to play
+    minLength: 1
+required:
+  - audioMediaId
+additionalProperties: false

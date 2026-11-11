@@ -1,0 +1,14 @@
+x-namespace: port1/systems/zero/capability-interfaces/media-player
+x-name: seek
+x-version: '1.0'
+x-type: message
+description: Schema for media playback seek message payload validation
+type: object
+properties:
+  positionMilliseconds:
+    type: integer
+    description: Position to seek to in milliseconds
+    minimum: 0
+required:
+  - positionMilliseconds
+additionalProperties: false

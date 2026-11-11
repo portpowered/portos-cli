@@ -1,0 +1,8 @@
+{
+  "device_code": "GmRhmhcxhwAzkoEqiMEg_DnyE-oqJVcbvZQyI1ZXqU",
+  "user_code": "WDJB-MJHT",
+  "verification_uri": "https://api.portos.example.com/oauth/device",
+  "verification_uri_complete": "https://api.portos.example.com/oauth/device?user_code=WDJB-MJHT",
+  "expires_in": 1800,
+  "interval": 5
+}

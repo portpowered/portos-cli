@@ -1,0 +1,7 @@
+x-namespace: port1/systems/zero/capability-interfaces/power
+x-name: turn-off
+x-version: '1.0'
+x-type: message
+description: Schema for power message payload validation
+type: object
+additionalProperties: false

@@ -1,0 +1,19 @@
+x-namespace: port1/systems/zero/capability-interfaces/power
+x-name: power
+x-version: '1.0'
+x-type: attribute-definition
+description: Schema for power attribute validation
+type: object
+properties:
+  value:
+    type: string
+    description: The power state of an endpoint
+    enum:
+      - 'ON'
+      - 'OFF'
+    x-enum-varnames:
+      - PowerStateOn
+      - PowerStateOff
+required:
+  - value
+additionalProperties: false

@@ -1,0 +1,8 @@
+x-namespace: port1/systems/zero/capability-interfaces/media-player
+x-name: next
+x-version: '1.0'
+x-type: message
+x-directionality: in
+description: Schema for media next message payload validation
+type: object
+additionalProperties: false

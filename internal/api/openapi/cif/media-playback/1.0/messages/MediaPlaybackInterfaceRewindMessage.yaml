@@ -1,0 +1,8 @@
+x-namespace: port1/systems/zero/capability-interfaces/media-player
+x-name: rewind
+x-version: '1.0'
+x-type: message
+x-directionality: in
+description: Schema for media rewind message payload validation
+type: object
+additionalProperties: false

@@ -1,0 +1,22 @@
+x-namespace: port1/systems/zero/capability-interfaces/rtc-session
+x-name: answer-generated-for-session
+x-version: '1.0'
+x-type: message
+x-directionality: out
+description: Schema for rtc session answer generated for session message payload validation
+type: object
+required:
+  - answer
+properties:
+  answer:
+    type: object
+    properties:
+      format:
+        type: string
+        enum:
+          - sdp
+      value:
+        type: object
+        additionalProperties: false
+        description: The content of the answer
+additionalProperties: false

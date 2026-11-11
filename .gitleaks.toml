@@ -1,0 +1,15 @@
+# Secret scan for the public portos-cli copy. Test keys and fixtures are
+# generated for the tests and grant nothing.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Generated test keys and fixtures"
+paths = [
+  '''_test\.go$''',
+  '''(^|[\/])test[\/]fixtures[\/]''',
+]
+regexTarget = "line"
+regexes = [
+  '''ed25519\.PrivateKey implements this''',
+]

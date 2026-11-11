@@ -1,0 +1,15 @@
+x-namespace: port1/systems/zero/capability-interfaces/brightness
+x-name: set-brightness
+x-version: '1.0'
+x-type: message
+description: Schema for brightness message payload validation
+type: object
+additionalProperties: false
+properties:
+  brightness:
+    type: integer
+    description: The brightness level to set
+    minimum: 0
+    maximum: 100
+required:
+  - brightness

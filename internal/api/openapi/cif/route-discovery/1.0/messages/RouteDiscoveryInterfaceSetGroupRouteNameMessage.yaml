@@ -1,0 +1,27 @@
+x-namespace: port1/systems/zero/capability-interfaces/route-discovery
+x-name: set-group-route-name
+x-version: '1.0'
+x-type: message
+x-directionality: in
+description: Request to set the name of a group route
+type: object
+additionalProperties: false
+required:
+  - groupRouteId
+  - name
+properties:
+  groupRouteId:
+    type: string
+    description: The ID of the group route to set the name for
+  name:
+    type: object
+    required:
+      - type
+      - value
+    properties:
+      type:
+        type: string
+        description: The type identifier of the name value, defined as plain when not defined
+      value:
+        type: string
+        description: The raw value of a plain name or localizable asset reference

@@ -1,0 +1,7 @@
+x-namespace: port1/systems/zero/capability-interfaces/brightness
+x-name: brightness
+x-version: '1.0'
+x-type: configuration
+description: Schema for brightness capability interface configuration
+type: object
+additionalProperties: false

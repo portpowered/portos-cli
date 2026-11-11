@@ -1,0 +1,7 @@
+x-namespace: port1/systems/zero/capability-interfaces/pet-feeder
+x-name: pet-feeder
+x-version: '1.0'
+x-type: configuration
+description: Schema for pet feeder capability interface configuration
+type: object
+additionalProperties: false

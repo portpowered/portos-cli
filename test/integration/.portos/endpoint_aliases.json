@@ -1,0 +1,10 @@
+{
+  "full_to_short": {
+    "port1/principals/user123/endpoints/endpoint1": "eAIA",
+    "port1/principals/user123/endpoints/endpoint2": "zJoU"
+  },
+  "short_to_full": {
+    "eAIA": "port1/principals/user123/endpoints/endpoint1",
+    "zJoU": "port1/principals/user123/endpoints/endpoint2"
+  }
+}

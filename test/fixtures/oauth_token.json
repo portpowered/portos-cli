@@ -1,0 +1,7 @@
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJwb3J0MS9wcmluY2lwYWxzL3VzZXIxMjMiLCJzY29wZSI6ImVuZHBvaW50OnJlYWQiLCJpYXQiOjE2ODQ4NjQwMDAsImV4cCI6MTY4NDg3MTIwMCwiZGV2aWNlX2F1dGhfaWQiOiJ0ZXN0X2RldmljZV9hdXRoX2lkIn0.test_signature",
+  "token_type": "Bearer",
+  "expires_in": 3600,
+  "refresh_token": "refresh_token_example",
+  "scope": "endpoint:read endpoint:write"
+}

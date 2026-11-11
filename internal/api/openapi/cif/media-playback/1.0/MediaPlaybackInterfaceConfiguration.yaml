@@ -1,0 +1,45 @@
+x-namespace: port1/systems/zero/capability-interfaces/media-player
+x-name: media-playback
+x-version: '1.0'
+x-type: configuration
+description: Schema for media playback capability interface configuration
+type: object
+properties:
+  supportedPlaybackStates:
+    type: array
+    items:
+      type: string
+      description: The current playback state
+      enum:
+        - playing
+        - paused
+        - stopped
+        - loading
+        - error
+      x-enum-varnames:
+        - PlaybackStatePlaying
+        - PlaybackStatePaused
+        - PlaybackStateStopped
+        - PlaybackStateLoading
+        - PlaybackStateError
+    description: Supported playback states
+  supportedPlaybackSpeeds:
+    type: array
+    items:
+      type: number
+    description: Supported playback speeds (e.g., 0.5, 1.0, 1.5, 2.0)
+  seekRange:
+    description: Seek range in seconds
+    type: object
+    properties:
+      min:
+        type: number
+        description: Minimum measured value
+      max:
+        type: number
+        description: Maximum measured value
+    required:
+      - min
+      - max
+    additionalProperties: false
+additionalProperties: false

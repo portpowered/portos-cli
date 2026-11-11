@@ -1,0 +1,20 @@
+x-namespace: port1/systems/zero/capability-interfaces/route-discovery
+x-name: add-group-route-members
+x-version: '1.0'
+x-type: message
+x-directionality: in
+description: Request to add members to a group route
+type: object
+additionalProperties: false
+required:
+  - groupRouteId
+  - memberPluginRouteIds
+properties:
+  groupRouteId:
+    type: string
+    description: The ID of the group route to add members to
+  memberPluginRouteIds:
+    type: array
+    items:
+      type: string
+    description: List of plugin route IDs to add as members to the group route

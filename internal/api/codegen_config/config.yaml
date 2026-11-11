@@ -1,0 +1,9 @@
+package: api
+output: models.gen.go
+generate:
+  models: true
+output-options:
+  # NOTE that this is only required for the `Unreferenced` type
+  skip-prune: true  # oapi-codegen v2.5.1 drops the property-level skip-pointer extension in union marshalers.
+  user-templates:
+    union.tmpl: ../../../backend/api/codegen_config/model_templates/union.tmpl

@@ -1,0 +1,7 @@
+x-namespace: port1/systems/zero/capability-interfaces/rtc-session
+x-name: rtc-session
+x-version: '1.0'
+x-type: configuration
+description: Schema for rtc session capability interface configuration
+type: object
+additionalProperties: false

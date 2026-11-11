@@ -1,0 +1,95 @@
+{
+  "results": [
+    {
+      "id": "port1/principals/user123/endpoints/endpoint1",
+      "name": {
+        "type": "PLAIN",
+        "value": "Living Room Light"
+      },
+      "type": "LIGHT",
+      "interfaces": [
+        {
+          "name": "port1/systems/zero/capability-interfaces/power",
+          "version": "1.0",
+          "messages": [
+            {
+              "name": "turn-off"
+            }
+          ],
+          "attributes": [
+            {
+              "name": "power",
+              "type": "boolean"
+            }
+          ]
+        }
+      ],
+      "ownerId": "port1/principals/user123",
+      "description": {
+        "type": "string",
+        "value": "A smart light bulb in the living room"
+      },
+      "manufacturer": {
+        "type": "string",
+        "value": "Philips"
+      },
+      "model": {
+        "type": "string",
+        "value": "Hue White"
+      },
+      "serialNumber": {
+        "type": "string",
+        "value": "12345678"
+      },
+      "resourceGroups": [],
+      "routes": []
+    },
+    {
+      "id": "port1/principals/user123/endpoints/endpoint2",
+      "name": {
+        "type": "PLAIN",
+        "value": "Kitchen Thermostat"
+      },
+      "type": "THERMOSTAT",
+      "interfaces": [
+        {
+          "name": "port1/systems/zero/capability-interfaces/temperature",
+          "version": "1.0",
+          "messages": [
+            {
+              "name": "set-target-temperature"
+            }
+          ],
+          "attributes": [
+            {
+              "name": "target-temperature",
+              "type": "number"
+            }
+          ]
+        }
+      ],
+      "ownerId": "port1/principals/user123",
+      "description": {
+        "type": "string",
+        "value": "Smart thermostat for the kitchen"
+      },
+      "manufacturer": {
+        "type": "string",
+        "value": "Nest"
+      },
+      "model": {
+        "type": "string",
+        "value": "Learning Thermostat"
+      },
+      "serialNumber": {
+        "type": "string",
+        "value": "87654321"
+      },
+      "resourceGroups": [],
+      "routes": []
+    }
+  ],
+  "paginationContext": {
+    "nextToken": null
+  }
+}

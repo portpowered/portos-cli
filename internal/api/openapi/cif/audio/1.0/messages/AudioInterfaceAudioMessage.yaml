@@ -1,0 +1,41 @@
+x-namespace: port1/systems/zero/capability-interfaces/media-player
+x-name: audio
+x-version: '1.0'
+x-type: message
+description: Schema for audio message payload validation
+type: object
+properties:
+  audio_data:
+    type: string
+    description: Base64 encoded audio data
+    format: base64
+  is_final:
+    type: boolean
+    description: Whether the audio is the final chunk
+    default: false
+  sequence_id:
+    type: integer
+    description: Number of audio channels
+  stream_id:
+    type: string
+    description: Audio stream ID
+    default: default
+  text:
+    type: string
+    description: Audio text
+    default: ''
+  mime_type:
+    type: string
+    description: Audio MIME type
+    default: audio/ogg
+  raw_bytes:
+    type: string
+    description: Audio raw bytes
+    format: binary
+    x-go-json-ignore: true
+    x-go-type: '[]byte'
+  duration:
+    type: number
+    description: Audio duration in seconds
+    minimum: 0
+additionalProperties: false

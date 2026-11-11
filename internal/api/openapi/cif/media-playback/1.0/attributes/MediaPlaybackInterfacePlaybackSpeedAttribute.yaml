@@ -1,0 +1,15 @@
+x-namespace: port1/systems/zero/capability-interfaces/media-player
+x-name: playback-speed
+x-version: '1.0'
+x-type: attribute-definition
+description: Schema for playback speed attribute validation
+type: object
+properties:
+  value:
+    type: number
+    description: Playback speed multiplier (1.0 = normal speed)
+    minimum: 0.1
+    maximum: 10
+required:
+  - value
+additionalProperties: false

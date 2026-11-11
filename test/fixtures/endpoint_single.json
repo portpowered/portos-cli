@@ -1,0 +1,50 @@
+{
+  "results": [{
+  "id": "port1/principals/user123/endpoints/endpoint1",
+  "name": {
+    "type": "PLAIN",
+    "value": "Living Room Light"
+  },
+  "type": "LIGHT",
+  "interfaces": [
+    {
+      "name": "port1/systems/zero/capability-interfaces/power",
+      "version": "1.0",
+      "messages": [
+        {
+          "name": "turn-off"
+        }
+      ],
+      "attributes": [
+        {
+          "name": "power",
+          "type": "boolean"
+        }
+      ]
+    }
+  ],
+  "ownerId": "port1/principals/user123",
+  "description": {
+    "type": "string",
+    "value": "A smart light bulb in the living room"
+  },
+  "manufacturer": {
+    "type": "string",
+    "value": "Philips"
+  },
+  "model": {
+    "type": "string",
+    "value": "Hue White"
+  },
+  "serialNumber": {
+    "type": "string",
+    "value": "12345678"
+  },
+    "resourceGroups": [],
+    "routes": []
+  }
+  ],
+  "paginationContext": {
+    "nextToken": null
+  }
+}

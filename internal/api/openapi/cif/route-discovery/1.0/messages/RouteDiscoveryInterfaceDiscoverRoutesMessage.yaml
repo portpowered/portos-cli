@@ -1,0 +1,8 @@
+x-namespace: port1/systems/zero/capability-interfaces/route-discovery
+x-name: discover-routes
+x-version: '1.0'
+x-type: message
+x-directionality: out
+description: Request to discover routes
+type: object
+additionalProperties: false

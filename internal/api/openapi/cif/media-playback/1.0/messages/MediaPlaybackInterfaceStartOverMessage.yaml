@@ -1,0 +1,8 @@
+x-namespace: port1/systems/zero/capability-interfaces/media-player
+x-name: start-over
+x-version: '1.0'
+x-type: message
+x-directionality: in
+description: Schema for media start over message payload validation
+type: object
+additionalProperties: false

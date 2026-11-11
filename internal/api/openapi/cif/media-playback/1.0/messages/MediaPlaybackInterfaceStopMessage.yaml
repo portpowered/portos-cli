@@ -1,0 +1,7 @@
+x-namespace: port1/systems/zero/capability-interfaces/media-player
+x-name: stop
+x-version: '1.0'
+x-type: message
+description: Schema for media playback stop message payload validation
+type: object
+additionalProperties: false

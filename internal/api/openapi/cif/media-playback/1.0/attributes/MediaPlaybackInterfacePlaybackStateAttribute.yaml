@@ -1,0 +1,25 @@
+x-namespace: port1/systems/zero/capability-interfaces/media-player
+x-name: playback-state
+x-version: '1.0'
+x-type: attribute-definition
+description: Schema for playback state attribute validation
+type: object
+properties:
+  value:
+    type: string
+    description: The current playback state
+    enum:
+      - playing
+      - paused
+      - stopped
+      - loading
+      - error
+    x-enum-varnames:
+      - PlaybackStatePlaying
+      - PlaybackStatePaused
+      - PlaybackStateStopped
+      - PlaybackStateLoading
+      - PlaybackStateError
+required:
+  - value
+additionalProperties: false

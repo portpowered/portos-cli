@@ -1,0 +1,14 @@
+x-namespace: port1/systems/zero/capability-interfaces/media-player
+x-name: search-and-play
+x-version: '1.0'
+x-type: message
+description: Schema for audio search and play message payload validation
+type: object
+properties:
+  query:
+    type: string
+    description: Query to search for audio content
+    minLength: 1
+required:
+  - query
+additionalProperties: false

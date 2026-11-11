@@ -1,0 +1,69 @@
+x-namespace: port1/systems/zero/capability-interfaces/route-discovery
+x-name: route-discovery-report
+x-version: '1.0'
+x-type: message
+x-directionality: out
+description: Report of discovered routes
+type: object
+additionalProperties: false
+properties:
+  routes:
+    type: array
+    items:
+      type: object
+      properties:
+        pluginRouteId:
+          type: string
+          description: The external ID of the route
+        name:
+          type: string
+          description: The name of the route
+        description:
+          type: string
+          description: The description of the route
+        type:
+          type: string
+          description: The type of the route that has been discovered
+        interfaces:
+          type: array
+          items:
+            type: object
+            properties:
+              namespace:
+                type: string
+                description: The name of the interface
+              version:
+                type: string
+                description: The version of the interface
+      additionalProperties: false
+  groupRoutes:
+    type: array
+    items:
+      type: object
+      properties:
+        name:
+          type: string
+          description: The name of the associated group route
+        interfaces:
+          type: array
+          items:
+            type: object
+            required:
+              - name
+            properties:
+              name:
+                type: string
+                description: The name of the interface
+              version:
+                type: string
+                description: the version of the interface
+              configuration:
+                type: object
+                additionalProperties: true
+                description: The configuration of the interface
+        memberPluginRouteIds:
+          type: array
+          items:
+            type: string
+          description: List of plugin route IDs that are members of this group route
+      additionalProperties: false

@@ -1,0 +1,38 @@
+x-namespace: port1/systems/zero/capability-interfaces/rtc-session
+x-name: initiate-session-with-offer
+x-version: '1.0'
+x-type: message
+x-directionality: in
+description: The initiate session with offer message is used to initiate an RTC session between the client and an endpoint.  The offer is expected to be a standard RTC SDP (standard description protocol) offer. The offer must contain all ICE candidates for the session to be established.
+type: object
+required:
+  - sessionId
+  - sessionDomain
+  - offer
+properties:
+  sessionId:
+    type: string
+  sessionDomain:
+    type: string
+  offer:
+    type: object
+    properties:
+      format:
+        type: string
+        enum:
+          - sdp
+      value:
+        type: string
+        description: The SDP offer sesion contents
+  sessionDuration:
+    type: integer
+    description: The duration of the session in seconds. If not provided, the default is 60 seconds. If provided, the session will be terminated after the duration has elapsed. To reestablish the session, the client must initiate a new session with a new offer.
+    minimum: 1
+    maximum: 3600
+    default: 60
+    examples:
+      - value: 60
+        description: 1 minute
+  autoAnswer:
+    type: boolean
+additionalProperties: false

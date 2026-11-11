@@ -1,0 +1,22 @@
+{
+  "correlationToken": "msg-1234567890",
+  "type": {
+    "name": "set_power",
+    "namespace": "power",
+    "version": "1.0"
+  },
+  "header": {
+    "name": "set_power",
+    "namespace": "power",
+    "version": "1.0"
+  },
+  "target": {
+    "endpoint": {
+      "id": "port1/principals/user123/endpoints/endpoint1"
+    }
+  },
+  "ownerId": "port1/principals/user123",
+  "body": {
+    "power": true
+  }
+}

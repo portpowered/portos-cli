@@ -1,0 +1,7 @@
+x-namespace: port1/systems/zero/capability-interfaces/power
+x-name: power
+x-version: '1.0'
+x-type: configuration
+description: Schema for power capability interface configuration
+type: object
+additionalProperties: false

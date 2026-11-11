@@ -1,0 +1,39 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Test
+        run: go test ./...
+        env:
+          CGO_ENABLED: '0'
+      - name: Build
+        env:
+          CGO_ENABLED: '0'
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          mkdir dist
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
+            os=${target%/*}; arch=${target#*/}
+            name="port-${os}-${arch}"
+            if [ "$os" = windows ]; then name="$name.exe"; fi
+            GOOS=$os GOARCH=$arch go build -trimpath -ldflags "-s -w -X main.version=$VERSION" -o "dist/$name" ./cmd/port
+          done
+          (cd dist && sha256sum port-* > SHA256SUMS)
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --generate-notes

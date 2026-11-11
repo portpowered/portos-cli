@@ -1,0 +1,19 @@
+{
+  "results": [
+    {
+      "id": "file-id-1",
+      "label": "readme.txt",
+      "friendlyName": {"type": "PLAIN", "value": "readme.txt"},
+      "contentType": "text/plain",
+      "size": 12
+    },
+    {
+      "id": "file-id-2",
+      "label": "doc.pdf",
+      "friendlyName": {"type": "PLAIN", "value": "doc.pdf"},
+      "contentType": "application/pdf",
+      "size": 1024
+    }
+  ],
+  "paginationContext": null
+}

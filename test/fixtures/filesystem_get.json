@@ -1,0 +1,6 @@
+{
+  "id": "/port1/users/test-user/filesystems/fs1",
+  "label": "my-fs",
+  "friendlyName": {"type": "PLAIN", "value": "My Filesystem"},
+  "owner": "port1/users/test-user"
+}

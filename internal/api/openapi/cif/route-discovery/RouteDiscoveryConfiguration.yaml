@@ -1,0 +1,7 @@
+x-namespace: port1/systems/zero/capability-interfaces/route-discovery
+x-name: route-discovery
+x-version: '1.0'
+x-type: configuration
+description: Schema for route discovery capability interface configuration
+type: object
+additionalProperties: false

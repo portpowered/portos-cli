@@ -1,0 +1,12 @@
+x-namespace: port1/systems/zero/capability-interfaces/media-player
+x-name: skip-forward
+x-version: '1.0'
+x-type: message
+description: Schema for media playback skip forward message payload validation
+type: object
+properties:
+  deltaPositionMilliseconds:
+    type: integer
+    description: Number of milliseconds to skip forward
+    minimum: 0
+additionalProperties: false

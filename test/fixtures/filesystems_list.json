@@ -1,0 +1,13 @@
+{
+  "results": [
+    {
+      "id": "/port1/users/test-user/filesystems/fs1",
+      "label": "my-fs"
+    },
+    {
+      "id": "/port1/users/test-user/filesystems/fs2",
+      "label": "backup-fs"
+    }
+  ],
+  "paginationContext": null
+}

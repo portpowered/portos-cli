@@ -1,0 +1,13 @@
+x-namespace: port1/systems/zero/capability-interfaces/rtc-session
+x-name: disconnect-session
+x-version: '1.0'
+x-type: message
+x-directionality: in
+description: Schema for rtc session disconnect session message payload validation
+type: object
+required:
+  - sessionId
+properties:
+  sessionId:
+    type: string
+additionalProperties: false

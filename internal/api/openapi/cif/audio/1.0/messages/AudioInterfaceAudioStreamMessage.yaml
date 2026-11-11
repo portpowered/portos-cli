@@ -1,0 +1,35 @@
+x-namespace: port1/systems/zero/capability-interfaces/media-player
+x-name: audio-stream
+x-version: '1.0'
+x-type: message
+description: Schema for audio stream message payload validation
+type: object
+properties:
+  stream_id:
+    type: string
+    description: Unique identifier for this audio stream
+    minLength: 1
+  sequence_id:
+    type: integer
+    description: Sequence ID for this audio stream
+    minimum: 0
+  is_final:
+    type: boolean
+    description: Whether this is the final chunk in the stream
+    default: false
+  audio_data:
+    type: string
+    description: Base64 encoded audio data
+    format: base64
+  raw_bytes:
+    type: string
+    description: Audio raw bytes
+    format: binary
+    x-go-json-ignore: true
+    x-go-type: '[]byte'
+required:
+  - stream_id
+  - text
+  - sequence_id
+  - is_final
+additionalProperties: false

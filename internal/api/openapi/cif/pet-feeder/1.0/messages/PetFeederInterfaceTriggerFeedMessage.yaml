@@ -1,0 +1,22 @@
+x-namespace: port1/systems/zero/capability-interfaces/pet-feeder
+x-name: trigger-feed
+x-version: '1.0'
+x-type: message
+description: Schema for pet feeder trigger feed message payload validation
+type: object
+properties:
+  feedAmount:
+    type: integer
+    description: Amount of food to feed the pet
+    minimum: 1
+    maximum: 100
+  unit:
+    type: string
+    description: Unit of food to feed the pet
+    enum:
+      - cups
+      - grams
+      - pounds
+      - ounces
+    default: cups
+additionalProperties: false
