@@ -51,6 +51,14 @@ func (s heldStream) Play(ctx context.Context, ogg []byte) (time.Duration, error)
 	return length, err
 }
 
+func (s heldStream) Record(ctx context.Context, duration time.Duration) (camera.Clip, error) {
+	clip, err := s.HeldCamera.Record(ctx, duration)
+	if err != nil {
+		return camera.Clip{}, err
+	}
+	return camera.Clip{Path: clip.Path, Codec: clip.Codec, FrameRate: clip.FrameRate}, nil
+}
+
 // sessionDomain is the API host, as the snapshot and record commands use.
 func (o *heldCameraOpener) sessionDomain() string {
 	manager, err := o.configProvider.GetManager()

@@ -63,8 +63,9 @@ func New(opts Options) Built {
 	holdSvc = holds.New(opts.Clock, sessions, opts.LoginCheck)
 	return Built{
 		Services: host.Services{
-			Holds:    &holdAdapter{holds: holdSvc, motion: motionSvc, camera: cameraSvc},
-			Messages: messages.New(holdSvc, motionSvc, heldCamera{camera: cameraSvc}, opts.Clock),
+			Holds:      &holdAdapter{holds: holdSvc, motion: motionSvc, camera: cameraSvc},
+			Messages:   messages.New(holdSvc, motionSvc, heldCamera{camera: cameraSvc}, opts.Clock),
+			Recordings: recordings{holds: holdSvc, camera: cameraSvc},
 		},
 		OnShutdown: func(ctx context.Context) {
 			holdSvc.EndAll(ctx, holds.ReasonHostShutdown)
@@ -108,6 +109,27 @@ func (c heldCamera) PlayAudio(ctx context.Context, holdID string, ogg []byte) (t
 		return 0, errNoCamera
 	}
 	return c.camera.PlayAudio(ctx, holdID, ogg)
+}
+
+// recordings serves POST /recordings from the camera service under a camera hold's lease.
+type recordings struct {
+	holds  holds.Service
+	camera camera.Service
+}
+
+func (r recordings) Record(ctx context.Context, lease, endpointID string, duration time.Duration) (host.Recording, error) {
+	if r.camera == nil {
+		return host.Recording{}, coded(errNoCamera)
+	}
+	hold, err := r.holds.Authorize(lease, endpointID, holds.KindCamera)
+	if err != nil {
+		return host.Recording{}, coded(err)
+	}
+	clip, err := r.camera.Record(ctx, hold.ID, duration)
+	if err != nil {
+		return host.Recording{}, coded(err)
+	}
+	return host.Recording{Path: clip.Path, Codec: clip.Codec, FrameRate: clip.FrameRate}, nil
 }
 
 // LoginCheck returns the check holds run before opening: the stored

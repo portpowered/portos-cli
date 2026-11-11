@@ -154,3 +154,39 @@ func TestOpenHoldRetriesOnClosingHost(t *testing.T) {
 	_, err = c.OpenHold(context.Background(), OpenHoldRequest{EndpointID: "ep/1", Kinds: []string{"motion"}})
 	require.ErrorIs(t, err, ErrRouteNotServed)
 }
+
+type stubRecordings struct{ t *testing.T }
+
+func (s stubRecordings) Record(_ context.Context, lease, endpointID string, duration time.Duration) (host.Recording, error) {
+	if lease != "secret-lease" {
+		return host.Recording{}, &host.CodedError{Code: "hold_lease_required", Message: "pass the lease"}
+	}
+	file, err := os.CreateTemp(s.t.TempDir(), "held-*.h264")
+	require.NoError(s.t, err)
+	_, err = file.WriteString(endpointID + " " + duration.String())
+	require.NoError(s.t, err)
+	require.NoError(s.t, file.Close())
+	return host.Recording{Path: file.Name(), Codec: "H264", FrameRate: 14.97}, nil
+}
+
+func TestRecordCarriesTheHeldVideoAndItsTiming(t *testing.T) {
+	dir := runInProcess(t, host.Services{Recordings: stubRecordings{t: t}})
+	client, err := Dial(t.Context(), dir)
+	require.NoError(t, err)
+
+	clip, err := client.Record(t.Context(), "secret-lease", "ep/robot", 3*time.Second)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.Remove(clip.Path) })
+	require.Equal(t, "H264", clip.Codec)
+	require.InDelta(t, 14.97, clip.FrameRate, 1e-9)
+	data, err := os.ReadFile(clip.Path)
+	require.NoError(t, err)
+	require.Equal(t, "ep/robot 3s", string(data))
+
+	_, err = client.Record(t.Context(), "", "ep/robot", 3*time.Second)
+	require.Equal(t, exitcode.ExitHold, exitcode.Code(err))
+	_, err = client.Record(t.Context(), "secret-lease", "ep/robot", 11*time.Minute)
+	var statusErr *StatusError
+	require.ErrorAs(t, err, &statusErr)
+	require.Equal(t, host.CodeInvalidRequest, statusErr.Code)
+}

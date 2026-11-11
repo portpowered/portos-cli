@@ -40,6 +40,8 @@ type Stream interface {
 	Latest(ctx context.Context, maxAge time.Duration) ([]byte, time.Time, error)
 	// Play starts an Ogg/Opus clip on the talkback track and returns its length.
 	Play(ctx context.Context, ogg []byte) (time.Duration, error)
+	// Record copies the video into a file for the duration and returns it.
+	Record(ctx context.Context, duration time.Duration) (Clip, error)
 	// Done is closed when the stream stops for any reason.
 	Done() <-chan struct{}
 	Close(ctx context.Context) error
@@ -61,6 +63,14 @@ type Frame struct {
 	CapturedAt time.Time
 }
 
+// Clip is video recorded from a held camera: raw H264 or IVF at Path, to be played at
+// FrameRate. The held camera receives no audio. The receiver removes Path.
+type Clip struct {
+	Path      string
+	Codec     string
+	FrameRate float64
+}
+
 // Status is a hold's camera as `port session status` shows it.
 type Status struct {
 	Live       bool       `json:"live"`
@@ -78,6 +88,8 @@ type Service interface {
 	// PlayAudio starts an Ogg/Opus clip on the held camera's talkback track
 	// and returns its length; the clip plays on after it returns.
 	PlayAudio(ctx context.Context, holdID string, ogg []byte) (time.Duration, error)
+	// Record copies the held video into a file for the duration.
+	Record(ctx context.Context, holdID string, duration time.Duration) (Clip, error)
 	Status(holdID string) (Status, bool)
 }
 
@@ -238,6 +250,21 @@ func (s *service) PlayAudio(ctx context.Context, holdID string, ogg []byte) (tim
 	default:
 		return 0, unavailable("play on the held camera: " + err.Error())
 	}
+}
+
+func (s *service) Record(ctx context.Context, holdID string, duration time.Duration) (Clip, error) {
+	stream, err := s.liveStream(holdID)
+	if err != nil {
+		return Clip{}, err
+	}
+	clip, err := stream.Record(ctx, duration)
+	if err != nil {
+		if ctx.Err() != nil {
+			return Clip{}, ctx.Err()
+		}
+		return Clip{}, unavailable("record the held camera: " + err.Error())
+	}
+	return clip, nil
 }
 
 func (s *service) Snapshot(ctx context.Context, holdID string) (Frame, error) {

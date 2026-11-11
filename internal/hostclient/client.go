@@ -11,6 +11,8 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"strconv"
 	"time"
 
 	"github.com/portpowered/portos-cli/internal/api"
@@ -33,6 +35,7 @@ const (
 	pathStatus   = "/status"
 	pathHolds    = "/holds"
 	pathMessages = "/message-requests"
+	pathRecord   = "/recordings"
 
 	// LeaseHeader carries the hold lease on POST /message-requests.
 	LeaseHeader = host.LeaseHeader
@@ -157,6 +160,41 @@ func (c *Client) Send(ctx context.Context, lease string, req *api.CreateMessageR
 	return &out, nil
 }
 
+// Recording is video the host recorded from a held camera, saved at Path: raw H264 or IVF to
+// be played at FrameRate. The caller removes Path.
+type Recording = host.Recording
+
+// Record asks the host for the held camera's video for the duration, under the given hold
+// lease, and saves it to a temporary file. It returns once the recording ends.
+func (c *Client) Record(ctx context.Context, lease, endpointID string, duration time.Duration) (Recording, error) {
+	header := http.Header{LeaseHeader: []string{lease}}
+	resp, err := c.send(ctx, http.MethodPost, pathRecord, header, host.RecordRequest{EndpointID: endpointID, DurationSeconds: duration.Seconds()})
+	if err != nil {
+		return Recording{}, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	rate, err := strconv.ParseFloat(resp.Header.Get(host.FrameRateHeader), 64)
+	if err != nil || rate <= 0 {
+		return Recording{}, fmt.Errorf("%w: the recording has no frame rate", ErrTransport)
+	}
+	codec := resp.Header.Get(host.VideoCodecHeader)
+	ext := ".h264"
+	if codec == "VP8" {
+		ext = ".ivf"
+	}
+	file, err := os.CreateTemp("", "portos-recording-*"+ext)
+	if err != nil {
+		return Recording{}, err
+	}
+	_, copyErr := io.Copy(file, resp.Body)
+	closeErr := file.Close()
+	if err := errors.Join(copyErr, closeErr); err != nil {
+		_ = os.Remove(file.Name())
+		return Recording{}, fmt.Errorf("%w: read the recording: %v", ErrTransport, err)
+	}
+	return Recording{Path: file.Name(), Codec: codec, FrameRate: rate}, nil
+}
+
 // StatusError is a non-2xx reply from the host. Code and Message are set when
 // the host replied with its JSON error body.
 type StatusError struct {
@@ -182,17 +220,31 @@ func (e *StatusError) Is(target error) bool {
 }
 
 func (c *Client) do(ctx context.Context, method, path string, header http.Header, body, out any) error {
+	resp, err := c.send(ctx, method, path, header, body)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if out == nil {
+		return nil
+	}
+	return json.NewDecoder(resp.Body).Decode(out)
+}
+
+// send makes one request and returns a 2xx reply for the caller to read and close; any other
+// status is a StatusError.
+func (c *Client) send(ctx context.Context, method, path string, header http.Header, body any) (*http.Response, error) {
 	var reader io.Reader
 	if body != nil {
 		data, err := json.Marshal(body)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		reader = bytes.NewReader(data)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, hostName+path, reader)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	for k, v := range header {
 		req.Header[k] = v
@@ -203,24 +255,21 @@ func (c *Client) do(ctx context.Context, method, path string, header http.Header
 	resp, err := c.http.Do(req)
 	if err != nil {
 		if isDialRefusal(err) {
-			return fmt.Errorf("%w: %v", ErrNotRunning, err)
+			return nil, fmt.Errorf("%w: %v", ErrNotRunning, err)
 		}
-		return fmt.Errorf("%w: %v", ErrTransport, err)
+		return nil, fmt.Errorf("%w: %v", ErrTransport, err)
 	}
-	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		defer func() { _ = resp.Body.Close() }()
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		statusErr := &StatusError{StatusCode: resp.StatusCode, Body: string(bytes.TrimSpace(msg))}
 		var body host.ErrorBody
 		if json.Unmarshal(msg, &body) == nil {
 			statusErr.Code, statusErr.Message = body.Code, body.Message
 		}
-		return statusErr
+		return nil, statusErr
 	}
-	if out == nil {
-		return nil
-	}
-	return json.NewDecoder(resp.Body).Decode(out)
+	return resp, nil
 }
 
 // isDialRefusal reports whether err is a failure to connect at all (no socket

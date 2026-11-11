@@ -73,6 +73,8 @@ func (s *service) Dispatch(ctx context.Context, lease string, req *api.CreateMes
 		return s.snapshot(ctx, lease, endpoint, header.Name)
 	case api.INTERFACE_PORTOS_MEDIA_PLAYER:
 		return s.playAudio(ctx, lease, endpoint, header.Name, req.Message.Body)
+	case api.INTERFACE_PORTOS_RTC_SESSION:
+		return s.refuse(endpoint, holds.CodeHoldOwnsSession, "the hold owns the camera session; record it with port message record and the lease, or release the hold first"), nil
 	case api.INTERFACE_PORTOS_REMOTE_CONTROL:
 	default:
 		return s.refuse(endpoint, holds.CodeNotServedByHold, "the session host serves only remote-control, snapshot and media-player play-audio for a held endpoint; send "+header.Namespace+"/"+header.Name+" without the lease"), nil

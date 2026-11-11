@@ -1,0 +1,80 @@
+package commands
+
+import (
+	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"testing"
+	"time"
+
+	apiclient "github.com/portpowered/portos-cli/internal/api_client"
+	"github.com/portpowered/portos-cli/internal/exitcode"
+	"github.com/portpowered/portos-cli/internal/hostclient"
+	"github.com/portpowered/portos-cli/internal/logging"
+	"github.com/portpowered/portos-cli/internal/services/messages"
+)
+
+// recordingHost is a held sender whose camera hold records a prepared clip.
+type recordingHost struct {
+	heldSender
+	clip     hostclient.Recording
+	err      error
+	duration time.Duration
+}
+
+func (h *recordingHost) Record(_ context.Context, _ string, d time.Duration) (hostclient.Recording, error) {
+	h.duration = d
+	return h.clip, h.err
+}
+
+// rawH264 writes seconds of 15 fps test video as raw H264, as the held camera keeps it.
+func rawH264(t *testing.T, seconds int) string {
+	t.Helper()
+	needFFmpeg(t)
+	path := filepath.Join(t.TempDir(), "held.h264")
+	args := []string{"-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=320x240:rate=15",
+		"-t", strconv.Itoa(seconds), "-c:v", "libx264", "-x264-params", "threads=1:slices=1", "-f", "h264", path}
+	if out, err := exec.Command("ffmpeg", args...).CombinedOutput(); err != nil {
+		t.Fatalf("ffmpeg: %v\n%s", err, out)
+	}
+	return path
+}
+
+func TestRecordUnderAHoldTapsTheHeldCamera(t *testing.T) {
+	host := &recordingHost{clip: hostclient.Recording{Path: rawH264(t, 3), Codec: videoCodecH264, FrameRate: 15}}
+	formatter := &recordingFormatter{json: true}
+	cmd := NewRecordCommand(nil, fixedResolver{host}, formatter, logging.NewLoggerRef(), nil)
+	out := filepath.Join(t.TempDir(), "held.mp4")
+	if err := cmd.Run(t.Context(), RecordParams{EndpointID: "ep/1", OutputPath: out, Duration: 3 * time.Second}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if host.duration != 3*time.Second {
+		t.Fatalf("asked the host for %v, want 3s", host.duration)
+	}
+	result := formatter.printed[0].(RecordResult)
+	if !result.Success || result.HasAudio || result.VideoCodec != videoCodecH264 || result.DurationSeconds < 2.8 || result.DurationSeconds > 3.1 {
+		t.Fatalf("result = %+v", result)
+	}
+	if _, err := os.Stat(host.clip.Path); !os.IsNotExist(err) {
+		t.Fatalf("the host's clip was left behind: %v", err)
+	}
+}
+
+func TestRecordUnderAHoldRefusals(t *testing.T) {
+	needFFmpeg(t)
+	lost := &recordingHost{err: &apiclient.MessageRequestFailed{Request: messages.Refusal(time.Now(), "ep/1", "camera_unavailable", "the held camera stopped")}}
+	cmd := NewRecordCommand(nil, fixedResolver{lost}, &recordingFormatter{json: true}, logging.NewLoggerRef(), nil)
+	err := cmd.Run(t.Context(), RecordParams{EndpointID: "ep/1", OutputPath: filepath.Join(t.TempDir(), "x.mp4"), Duration: time.Second})
+	if got := exitcode.Code(err); got != exitcode.ExitCamera {
+		t.Fatalf("a lost camera exits %d (%v), want %d", got, err, exitcode.ExitCamera)
+	}
+
+	vp8 := &recordingHost{clip: hostclient.Recording{Path: filepath.Join(t.TempDir(), "held.ivf"), Codec: videoCodecVP8, FrameRate: 15}}
+	cmd = NewRecordCommand(nil, fixedResolver{vp8}, &recordingFormatter{json: true}, logging.NewLoggerRef(), nil)
+	err = cmd.Run(t.Context(), RecordParams{EndpointID: "ep/1", OutputPath: filepath.Join(t.TempDir(), "x.mp4"), Duration: time.Second})
+	if got := exitcode.Code(err); got != exitcode.ExitInvalid {
+		t.Fatalf("VP8 into .mp4 exits %d (%v), want %d", got, err, exitcode.ExitInvalid)
+	}
+}

@@ -238,3 +238,14 @@ func TestDispatchPlayAudioRefusals(t *testing.T) {
 		})
 	}
 }
+
+func TestDispatchRefusesCameraSessionMessagesUnderAHold(t *testing.T) {
+	request := &api.CreateMessageRequest{
+		Target:  api.CreateMessageTarget{Type: api.EndpointTarget, Id: "ep/1"},
+		Message: api.Message{Header: &api.MessageHeader{Namespace: api.INTERFACE_PORTOS_RTC_SESSION, Name: "initiate-session-with-offer", Version: "1.0"}},
+	}
+	reply, err := newServiceWithSnapshots(&fakeAuth{}, &fakeSnapshots{}).Dispatch(t.Context(), "lease", request)
+	require.NoError(t, err)
+	require.Equal(t, holds.CodeHoldOwnsSession, exitcode.ProviderCode(reply))
+	require.Equal(t, exitcode.ExitHold, exitcode.Code(&apiclient.MessageRequestFailed{Request: reply}))
+}

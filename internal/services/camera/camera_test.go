@@ -22,6 +22,7 @@ type fakeStream struct {
 	err    error
 	play   error
 	played [][]byte
+	record error
 }
 
 func (f *fakeStream) Latest(context.Context, time.Duration) ([]byte, time.Time, error) {
@@ -35,6 +36,12 @@ func (f *fakeStream) Play(_ context.Context, ogg []byte) (time.Duration, error) 
 	}
 	f.played = append(f.played, ogg)
 	return time.Second, nil
+}
+func (f *fakeStream) Record(_ context.Context, d time.Duration) (Clip, error) {
+	if f.record != nil {
+		return Clip{}, f.record
+	}
+	return Clip{Path: fmt.Sprintf("clip-%d-%s", f.id, d), Codec: "H264", FrameRate: 15}, nil
 }
 func (f *fakeStream) Done() <-chan struct{} { return f.done }
 func (f *fakeStream) Close(context.Context) error {
@@ -257,5 +264,23 @@ func TestPlayAudioRefusals(t *testing.T) {
 	_, _, svc, _ := newTestService(t)
 	if _, err := svc.PlayAudio(t.Context(), "hold-9", nil); !IsUnavailable(err) {
 		t.Fatalf("PlayAudio with no camera = %v, want camera_unavailable", err)
+	}
+}
+
+func TestRecordUsesTheHeldStream(t *testing.T) {
+	opener, _, svc, _ := newTestService(t)
+	if err := svc.Open(t.Context(), "hold-1", "ep"); err != nil {
+		t.Fatal(err)
+	}
+	clip, err := svc.Record(t.Context(), "hold-1", 3*time.Second)
+	if err != nil || clip.Path != "clip-1-3s" || clip.FrameRate != 15 {
+		t.Fatalf("Record = %+v, %v", clip, err)
+	}
+	opener.stream(0).record = errors.New("the held camera stopped during the recording")
+	if _, err := svc.Record(t.Context(), "hold-1", time.Second); !IsUnavailable(err) {
+		t.Fatalf("Record on a broken stream = %v, want camera_unavailable", err)
+	}
+	if _, err := svc.Record(t.Context(), "hold-9", time.Second); !IsUnavailable(err) {
+		t.Fatalf("Record with no camera = %v, want camera_unavailable", err)
 	}
 }

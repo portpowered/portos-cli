@@ -147,7 +147,7 @@ func (c *RecordCommand) Generate() *cobra.Command {
 	command := &cobra.Command{
 		Aliases: []string{"rec"},
 		Short:   "Record video and audio from an endpoint",
-		Long:    `Establishes an RTC session and records video, with sound when the device sends it, for the specified duration to a file. Playback runs at real speed for the true length. The container follows the extension: .mp4 and .mov (audio encoded as AAC), .mkv (everything copied), .webm (VP8 video only). A device with no audio track is saved video-only and the result says so.`,
+		Long:    `Establishes an RTC session and records video, with sound when the device sends it, for the specified duration to a file. Playback runs at real speed for the true length. The container follows the extension: .mp4 and .mov (audio encoded as AAC), .mkv (everything copied), .webm (VP8 video only). A device with no audio track is saved video-only and the result says so. Under a camera hold (session hold --camera, with the lease) it records the held camera instead, without opening a camera session of its own; that clip is video only, because the held camera never turns the microphone on, and lasts at most 600 seconds. While a camera hold is live, record needs its lease.`,
 		Example: `port msg record ep0 --output ./file.mp4 --duration 30`,
 		Args:    cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {

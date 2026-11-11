@@ -6,8 +6,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/portpowered/portos-cli/internal/api"
@@ -26,6 +28,15 @@ const openTimeout = 60 * time.Second
 
 // LeaseHeader carries the hold lease on POST /message-requests.
 const LeaseHeader = "Portos-Lease"
+
+// Headers of a POST /recordings reply, whose body is the raw video.
+const (
+	VideoCodecHeader = "Portos-Video-Codec"
+	FrameRateHeader  = "Portos-Frame-Rate"
+)
+
+// MaxRecordingSeconds is the longest recording POST /recordings takes.
+const MaxRecordingSeconds = 600
 
 // Host error codes the routes themselves produce.
 const (
@@ -91,6 +102,25 @@ type OpenHoldRequest struct {
 	DeadManSeconds int      `json:"deadManSeconds,omitempty"`
 }
 
+// RecordRequest is the body of POST /recordings.
+type RecordRequest struct {
+	EndpointID      string  `json:"endpointId"`
+	DurationSeconds float64 `json:"durationSeconds"`
+}
+
+// Recording is video recorded from a held camera, at Path on the host's disk: raw H264 or IVF
+// to be played at FrameRate. The route sends it as the reply body and removes it.
+type Recording struct {
+	Path      string
+	Codec     string
+	FrameRate float64
+}
+
+// RecordingService records a held camera under a hold's lease.
+type RecordingService interface {
+	Record(ctx context.Context, lease, endpointID string, duration time.Duration) (Recording, error)
+}
+
 // ListHoldsResponse is the reply to GET /holds.
 type ListHoldsResponse struct {
 	Holds []HoldStatus `json:"holds"`
@@ -137,8 +167,9 @@ type MessageService interface {
 // Services are the in-memory services the host serves. A nil field means that
 // part is not available: no holds are listed and its routes return 404.
 type Services struct {
-	Holds    HoldService
-	Messages MessageService
+	Holds      HoldService
+	Messages   MessageService
+	Recordings RecordingService
 }
 
 func (s Services) holds() []HoldStatus {
@@ -177,6 +208,9 @@ func newHandler(version string, started time.Time, services Services, g *gate) h
 	}
 	if services.Messages != nil {
 		mountMessages(mux, services.Messages)
+	}
+	if services.Recordings != nil {
+		mountRecordings(mux, services.Recordings)
 	}
 	return mux
 }
@@ -265,6 +299,37 @@ func mountMessages(mux *http.ServeMux, messages MessageService) {
 			return
 		}
 		writeJSON(w, http.StatusOK, reply)
+	})
+}
+
+// mountRecordings serves POST /recordings: the held camera's video for the requested duration,
+// as raw H264 or IVF with its codec and frame rate in headers. It replies once the recording ends.
+func mountRecordings(mux *http.ServeMux, recordings RecordingService) {
+	mux.HandleFunc("POST /recordings", func(w http.ResponseWriter, r *http.Request) {
+		var req RecordRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.EndpointID == "" ||
+			req.DurationSeconds <= 0 || req.DurationSeconds > MaxRecordingSeconds {
+			writeError(w, http.StatusBadRequest, CodeInvalidRequest, "a recording needs endpointId and durationSeconds between 0 and 600")
+			return
+		}
+		duration := time.Duration(req.DurationSeconds * float64(time.Second))
+		clip, err := recordings.Record(r.Context(), r.Header.Get(LeaseHeader), req.EndpointID, duration)
+		if err != nil {
+			writeHoldError(w, err)
+			return
+		}
+		defer func() { _ = os.Remove(clip.Path) }()
+		file, err := os.Open(clip.Path)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, CodeHoldFailed, "read the recording: "+err.Error())
+			return
+		}
+		defer func() { _ = file.Close() }()
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Header().Set(VideoCodecHeader, clip.Codec)
+		w.Header().Set(FrameRateHeader, strconv.FormatFloat(clip.FrameRate, 'f', -1, 64))
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.Copy(w, file)
 	})
 }
 

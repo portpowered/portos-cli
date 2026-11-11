@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/portpowered/portos-cli/internal/api"
 	apiclient "github.com/portpowered/portos-cli/internal/api_client"
@@ -26,6 +27,9 @@ type fakeHost struct {
 }
 
 func (f *fakeHost) ListHolds(context.Context) ([]hostclient.Hold, error) { return f.holds, f.listErr }
+func (f *fakeHost) Record(_ context.Context, lease, endpointID string, d time.Duration) (hostclient.Recording, error) {
+	return hostclient.Recording{Path: lease + " " + endpointID + " " + d.String(), Codec: "H264", FrameRate: 15}, nil
+}
 func (f *fakeHost) Send(_ context.Context, lease string, req *api.CreateMessageRequest) (*api.MessageRequest, error) {
 	f.sent = append(f.sent, recordedSend{lease, req})
 	return &api.MessageRequest{Id: "host"}, nil
@@ -216,4 +220,32 @@ func TestResolverRefusalsExitWithHoldCode(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, exitcode.ExitHold, exitcode.Code(&apiclient.MessageRequestFailed{Request: reply}), code)
 	}
+}
+
+func TestRecordGoesThroughTheCameraHold(t *testing.T) {
+	host := &fakeHost{holds: []hostclient.Hold{{ID: "hold-1", EndpointID: "ep/1", Kinds: []string{"camera"}, State: "live"}}}
+	r, messages := newResolver(t.TempDir(), host, nil, "lease-1")
+	sender, err := r.For(t.Context(), "ep/1", api.INTERFACE_PORTOS_RTC_SESSION)
+	require.NoError(t, err)
+	require.True(t, Held(sender))
+	clip, err := RecordHeld(t.Context(), sender, "ep/1", 3*time.Second)
+	require.NoError(t, err)
+	require.Equal(t, "lease-1 ep/1 3s", clip.Path)
+	require.Zero(t, messages.sent)
+
+	// A motion-only hold leaves the camera to the cloud path.
+	motionOnly := &fakeHost{holds: []hostclient.Hold{{ID: "hold-1", EndpointID: "ep/1", Kinds: []string{"motion"}, State: "live"}}}
+	r, _ = newResolver(t.TempDir(), motionOnly, nil, "")
+	sender, err = r.For(t.Context(), "ep/1", api.INTERFACE_PORTOS_RTC_SESSION)
+	require.NoError(t, err)
+	require.False(t, Held(sender))
+	_, err = RecordHeld(t.Context(), sender, "ep/1", time.Second)
+	require.Error(t, err)
+
+	// A lease with no live hold never opens a camera session of its own.
+	r, _ = newResolver(t.TempDir(), &fakeHost{}, nil, "stale")
+	sender, err = r.For(t.Context(), "ep/1", api.INTERFACE_PORTOS_RTC_SESSION)
+	require.NoError(t, err)
+	_, err = RecordHeld(t.Context(), sender, "ep/1", time.Second)
+	require.Equal(t, exitcode.ExitHold, exitcode.Code(err))
 }

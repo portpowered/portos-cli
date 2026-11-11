@@ -49,6 +49,7 @@ cp -rn "portos-cli-${VERSION#v}/skills/robot-navigation/tricks" ~/robot/
 | `port message move <robot> "rotate 90, forward 1m"` | The same moves from a short grammar, for one-off use |
 | `port endpoint attribute <robot> spatial/pose --force` | Reads the pose from the robot |
 | `port message snapshot <robot> --output frame.jpg` | Saves the camera's current frame (from the held camera when your hold has one) |
+| `port message record <robot> --output clip.mp4 --duration 30 --json` | Records the camera, with sound when it opens its own session. Under a `--camera` hold it records the held camera instead: video only, at most 600 seconds, and it needs the lease |
 | `port message play-audio <robot> --file hi.ogg --json` | Plays a clip of up to 60 seconds on the robot's speaker and returns once it starts; `seconds` says how long it plays. Under a `--camera` hold it goes through the held camera (other formats are converted to Ogg/Opus with ffmpeg). A second clip while one plays exits 12 |
 | `port group list --expand interfaces.attributes --json` | Your groups; each room's `spatial/geometry` attribute holds its shape and map frame. Follow `next_token` for more pages |
 

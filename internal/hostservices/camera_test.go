@@ -25,9 +25,12 @@ func (s *stubStream) Latest(context.Context, time.Duration) ([]byte, time.Time, 
 	return []byte{0xff, 0xd8}, time.Unix(1000, 0), nil
 }
 func (s *stubStream) Play(context.Context, []byte) (time.Duration, error) { return time.Second, nil }
-func (s *stubStream) Done() <-chan struct{}                               { return s.done }
-func (s *stubStream) Close(context.Context) error                         { s.end(); return nil }
-func (s *stubStream) end()                                                { s.once.Do(func() { close(s.done) }) }
+func (s *stubStream) Record(context.Context, time.Duration) (camera.Clip, error) {
+	return camera.Clip{Path: "held.h264", Codec: "H264", FrameRate: 15}, nil
+}
+func (s *stubStream) Done() <-chan struct{}       { return s.done }
+func (s *stubStream) Close(context.Context) error { s.end(); return nil }
+func (s *stubStream) end()                        { s.once.Do(func() { close(s.done) }) }
 
 type stubOpener struct {
 	mu      sync.Mutex
@@ -104,4 +107,30 @@ func TestWithoutACameraOpenerAHoldCannotCoverTheCamera(t *testing.T) {
 	built := New(Options{Clock: clock.NewFake(time.Unix(1000, 0)), Portos: okPortos{}, Keepalive: keepalive.Default})
 	_, err := built.Services.Holds.Open(t.Context(), host.OpenHoldRequest{EndpointID: heldEndpoint, Kinds: []string{"camera"}})
 	require.Error(t, err)
+}
+
+func TestRecordingsNeedTheCameraHoldsLease(t *testing.T) {
+	built := New(Options{Clock: clock.NewFake(time.Unix(1000, 0)), Portos: okPortos{}, Keepalive: keepalive.Default, Camera: &stubOpener{}})
+	opened, err := built.Services.Holds.Open(t.Context(), host.OpenHoldRequest{EndpointID: heldEndpoint, Kinds: []string{"camera"}})
+	require.NoError(t, err)
+
+	clip, err := built.Services.Recordings.Record(t.Context(), opened.Lease, heldEndpoint, 3*time.Second)
+	require.NoError(t, err)
+	require.Equal(t, host.Recording{Path: "held.h264", Codec: "H264", FrameRate: 15}, clip)
+
+	_, err = built.Services.Recordings.Record(t.Context(), "", heldEndpoint, 3*time.Second)
+	requireHostCode(t, err, holds.CodeHoldLeaseRequired)
+	_, err = built.Services.Recordings.Record(t.Context(), "not-the-lease", heldEndpoint, 3*time.Second)
+	requireHostCode(t, err, holds.CodeHoldOwnedByOther)
+
+	noCamera := New(Options{Clock: clock.NewFake(time.Unix(1000, 0)), Portos: okPortos{}, Keepalive: keepalive.Default})
+	_, err = noCamera.Services.Recordings.Record(t.Context(), opened.Lease, heldEndpoint, 3*time.Second)
+	requireHostCode(t, err, holds.CodeCameraUnavailable)
+}
+
+func requireHostCode(t *testing.T, err error, code string) {
+	t.Helper()
+	var coded *host.CodedError
+	require.ErrorAs(t, err, &coded)
+	require.Equal(t, code, coded.Code)
 }

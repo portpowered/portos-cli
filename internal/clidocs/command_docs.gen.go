@@ -648,7 +648,7 @@ var Commands = map[string]CommandDoc{
 			"record",
 		},
 		Summary:            "Record video and audio from an endpoint",
-		Description:        "Establish an RTC session and record video, with sound when the device sends it, for a specified duration to a file. The session also offers the Port OS media relay, so devices behind a firewall still connect; without the relay it falls back to direct connections. The clip plays at real speed for its true length. The container follows the extension - .mp4 and .mov encode the audio as AAC, .mkv copies both tracks, .webm holds VP8 video only. A device with no audio track is saved video-only and the result says so (hasAudio false).",
+		Description:        "Establish an RTC session and record video, with sound when the device sends it, for a specified duration to a file. The session also offers the Port OS media relay, so devices behind a firewall still connect; without the relay it falls back to direct connections. The clip plays at real speed for its true length. The container follows the extension - .mp4 and .mov encode the audio as AAC, .mkv copies both tracks, .webm holds VP8 video only. A device with no audio track is saved video-only and the result says so (hasAudio false). Under a camera hold (session hold --camera, with the lease) it records the held camera instead, without opening a camera session of its own; that clip is video only, because the held camera never turns the microphone on, and lasts at most 600 seconds. While a camera hold is live, record needs its lease.",
 		Category:           "messages",
 		CanonicalReference: "api/cli/commands.yaml",
 		Arguments: []ArgumentDoc{

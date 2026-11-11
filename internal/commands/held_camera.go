@@ -60,6 +60,7 @@ type HeldCamera struct {
 	counter    int
 	closed     bool
 	playing    bool
+	taps       []*heldTap // recordings in progress
 }
 
 // heldSegment is one file of video that starts at a keyframe.
@@ -232,6 +233,9 @@ func (h *HeldCamera) write(packet *rtp.Packet) (bool, error) {
 			segment.frames += added
 			framed = true
 		}
+	}
+	if err := h.writeTapsLocked(packet, now); err != nil {
+		return false, err
 	}
 	if framed {
 		h.lastFrame = now

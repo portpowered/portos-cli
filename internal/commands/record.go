@@ -6,12 +6,16 @@ import (
 	"fmt"
 	"math"
 	"net/url"
+	"os"
 	"os/exec"
 	"time"
 
+	"github.com/portpowered/portos-cli/internal/api"
 	"github.com/portpowered/portos-cli/internal/config"
+	"github.com/portpowered/portos-cli/internal/exitcode"
 	"github.com/portpowered/portos-cli/internal/logging"
 	"github.com/portpowered/portos-cli/internal/output"
+	"github.com/portpowered/portos-cli/internal/transport"
 	"go.uber.org/zap"
 )
 
@@ -21,15 +25,17 @@ var errFFmpegMissing = errors.New("ffmpeg is required to write the recording but
 // RecordCommand handles the `port message <endpoint-id> record --output <path> --duration <seconds>` subcommand.
 type RecordCommand struct {
 	recorder       *Recorder
+	resolver       transport.Resolver
 	formatter      output.Formatter
 	logger         *logging.LoggerRef
 	configProvider *config.ManagerProvider
 }
 
 // NewRecordCommand creates a new record command.
-func NewRecordCommand(recorder *Recorder, formatter output.Formatter, logger *logging.LoggerRef, configProvider *config.ManagerProvider) *RecordCommand {
+func NewRecordCommand(recorder *Recorder, resolver transport.Resolver, formatter output.Formatter, logger *logging.LoggerRef, configProvider *config.ManagerProvider) *RecordCommand {
 	return &RecordCommand{
 		recorder:       recorder,
+		resolver:       resolver,
 		formatter:      formatter,
 		logger:         logger,
 		configProvider: configProvider,
@@ -58,7 +64,8 @@ type RecordParams struct {
 }
 
 // Run establishes an RTC session via the recorder for the given duration, then muxes the video
-// (and the audio, when the device sends it) to outputPath using ffmpeg.
+// (and the audio, when the device sends it) to outputPath using ffmpeg. Under a camera hold it
+// records the held camera instead, without opening a session of its own.
 func (c *RecordCommand) Run(ctx context.Context, params RecordParams) error {
 	if params.EndpointID == "" {
 		return fmt.Errorf("endpoint ID is required")
@@ -73,6 +80,14 @@ func (c *RecordCommand) Run(ctx context.Context, params RecordParams) error {
 	// Muxing is the last step; fail before a 30 s capture rather than after it.
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
 		return errFFmpegMissing
+	}
+
+	sender, err := c.resolver.For(ctx, params.EndpointID, api.INTERFACE_PORTOS_RTC_SESSION)
+	if err != nil {
+		return err
+	}
+	if transport.Held(sender) {
+		return c.runHeld(ctx, sender, params)
 	}
 
 	manager, err := c.configProvider.GetManager()
@@ -117,11 +132,37 @@ func (c *RecordCommand) Run(ctx context.Context, params RecordParams) error {
 	if err != nil {
 		return err
 	}
+	return c.print(res)
+}
+
+// runHeld records the held camera through the session host. The held camera receives no audio
+// (holding it never turns a robot microphone on), so the file is video only.
+func (c *RecordCommand) runHeld(ctx context.Context, sender transport.Sender, params RecordParams) error {
+	c.logger.Logger().Info("recording the held camera",
+		zap.String("endpoint_id", params.EndpointID), zap.Duration("duration", params.Duration))
+	clip, err := transport.RecordHeld(ctx, sender, params.EndpointID, params.Duration)
+	if err != nil {
+		return fmt.Errorf("record the held camera: %w", err)
+	}
+	defer func() { _ = os.Remove(clip.Path) }()
+	if err := checkContainerSupportsVideo(params.OutputPath, clip.Codec); err != nil {
+		return exitcode.NewInvalidArgument(err)
+	}
+	rec := &RecorderResult{TempPath: clip.Path, VideoCodec: clip.Codec, FrameRate: clip.FrameRate, VideoSpan: params.Duration}
+	res, err := c.mux(ctx, rec, params.OutputPath, params.Duration)
+	if err != nil {
+		return err
+	}
+	res.Message = "Recorded from the held camera, which carries no audio"
+	return c.print(res)
+}
+
+func (c *RecordCommand) print(res RecordResult) error {
 	if c.formatter.IsJSON() {
 		return c.formatter.Print(res)
 	}
-	return c.formatter.Print(fmt.Sprintf("Recording saved to %s (%s)", params.OutputPath,
-		recordingSummary(params.OutputPath, res.DurationSeconds, res.VideoCodec, res.HasAudio)))
+	return c.formatter.Print(fmt.Sprintf("Recording saved to %s (%s)", res.OutputPath,
+		recordingSummary(res.OutputPath, res.DurationSeconds, res.VideoCodec, res.HasAudio)))
 }
 
 // mux writes the recorded tracks to outPath at their real speed and measures the result.
