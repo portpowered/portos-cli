@@ -52,6 +52,17 @@ type MotionStatus struct {
 	Pending       int                                `json:"pending"`
 }
 
+// CameraStatus is a hold's camera: whether its stream is live, when the host
+// renews it, and why it stopped if it did.
+type CameraStatus struct {
+	Live        bool       `json:"live"`
+	OpenedAt    time.Time  `json:"openedAt"`
+	RenewsAt    time.Time  `json:"renewsAt"`
+	Renewals    int        `json:"renewals"`
+	LastFrameAt *time.Time `json:"lastFrameAt,omitempty"`
+	LostReason  string     `json:"lostReason,omitempty"`
+}
+
 // HoldStatus is the JSON shape of one hold. It never carries the lease.
 type HoldStatus struct {
 	ID             string        `json:"id"`
@@ -63,6 +74,7 @@ type HoldStatus struct {
 	DeadManSeconds int           `json:"deadManSeconds"`
 	Ending         *EndingStatus `json:"ending,omitempty"`
 	Motion         *MotionStatus `json:"motion,omitempty"`
+	Camera         *CameraStatus `json:"camera,omitempty"`
 }
 
 // OpenedHold is the reply to POST /holds: the hold and the lease that proves

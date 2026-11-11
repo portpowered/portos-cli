@@ -22,6 +22,7 @@ const LeaseEnv = "PORTOS_LEASE"
 // kindNamespaces are the capability namespaces each hold kind covers.
 var kindNamespaces = map[string][]string{
 	"motion": {api.INTERFACE_PORTOS_REMOTE_CONTROL},
+	"camera": {api.INTERFACE_PORTOS_SNAPSHOT},
 }
 
 type resolver struct {

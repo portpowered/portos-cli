@@ -317,11 +317,20 @@ func extractAnswerSDP(response *api.MessageRequest) (string, error) {
 }
 
 func recordingSessionRequest(params RecorderParams, offerSDP string) *api.CreateMessageRequest {
+	// The provider lease starts before its answer is delivered. Allow remote ICE gathering as
+	// well as first-frame startup and capture.
+	lifetime := params.Duration + iceGatherTimeout + frameWaitTimeout + rtcSessionCleanupTimeout
+	return sessionRequest(params.EndpointID, params.SessionDomain, params.SessionID, lifetime, offerSDP)
+}
+
+// sessionRequest is the SYNC initiate-session-with-offer request for a camera session of the
+// given lifetime, rounded up to whole seconds.
+func sessionRequest(endpointID, sessionDomain, sessionID string, lifetime time.Duration, offerSDP string) *api.CreateMessageRequest {
 	msgType := rtcSessionNamespace + "/" + rtcSessionInitiate
 	return &api.CreateMessageRequest{
 		Target: api.CreateMessageTarget{
 			Type: api.EndpointTarget,
-			Id:   params.EndpointID,
+			Id:   endpointID,
 		},
 		Message: api.Message{
 			Type: &msgType,
@@ -331,11 +340,9 @@ func recordingSessionRequest(params RecorderParams, offerSDP string) *api.Create
 				Version:   "1.0",
 			},
 			Body: map[string]interface{}{
-				"sessionId":     params.SessionID,
-				"sessionDomain": params.SessionDomain,
-				// The provider lease starts before its answer is delivered. Allow
-				// remote ICE gathering as well as first-frame startup and capture.
-				"sessionDuration": int(math.Ceil((params.Duration + iceGatherTimeout + frameWaitTimeout + rtcSessionCleanupTimeout).Seconds())),
+				"sessionId":       sessionID,
+				"sessionDomain":   sessionDomain,
+				"sessionDuration": int(math.Ceil(lifetime.Seconds())),
 				"offer": map[string]interface{}{
 					"format": api.RtcOfferFormatSdp,
 					"value":  offerSDP,
@@ -344,5 +351,4 @@ func recordingSessionRequest(params RecorderParams, offerSDP string) *api.Create
 		},
 		ResponseType: func() *api.CreateMessageRequestResponseType { t := api.SyncResponseType; return &t }(),
 	}
-
 }

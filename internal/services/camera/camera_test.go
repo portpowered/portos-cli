@@ -1,0 +1,205 @@
+package camera
+
+import (
+	"context"
+	"errors"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/portpowered/portos-cli/internal/clock"
+	"github.com/portpowered/portos-cli/internal/services/holds"
+)
+
+type fakeStream struct {
+	id     int
+	done   chan struct{}
+	once   sync.Once
+	mu     sync.Mutex
+	closed bool
+	frame  []byte
+	err    error
+}
+
+func (f *fakeStream) Latest(context.Context, time.Duration) ([]byte, time.Time, error) {
+	return f.frame, time.Unix(int64(f.id), 0), f.err
+}
+func (f *fakeStream) Done() <-chan struct{} { return f.done }
+func (f *fakeStream) Close(context.Context) error {
+	f.mu.Lock()
+	f.closed = true
+	f.mu.Unlock()
+	f.end()
+	return nil
+}
+func (f *fakeStream) end() { f.once.Do(func() { close(f.done) }) }
+func (f *fakeStream) isClosed() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.closed
+}
+
+type fakeOpener struct {
+	mu        sync.Mutex
+	streams   []*fakeStream
+	lifetimes []time.Duration
+	fail      error
+}
+
+func (o *fakeOpener) Open(_ context.Context, _ string, lifetime time.Duration) (Stream, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.fail != nil {
+		return nil, o.fail
+	}
+	s := &fakeStream{id: len(o.streams) + 1, done: make(chan struct{}), frame: []byte{0xff, 0xd8, byte(len(o.streams) + 1)}}
+	o.streams = append(o.streams, s)
+	o.lifetimes = append(o.lifetimes, lifetime)
+	return s, nil
+}
+
+func (o *fakeOpener) stream(i int) *fakeStream {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.streams[i]
+}
+
+type lostCall struct {
+	holdID string
+	reason holds.Reason
+}
+
+func newTestService(t *testing.T) (*fakeOpener, *clock.Fake, Service, chan lostCall) {
+	t.Helper()
+	opener := &fakeOpener{}
+	fake := clock.NewFake(time.Unix(1000, 0))
+	lost := make(chan lostCall, 4)
+	svc := New(opener, fake, func(holdID string, reason holds.Reason, _ string) { lost <- lostCall{holdID, reason} })
+	return opener, fake, svc, lost
+}
+
+func TestSnapshotServesTheHeldStream(t *testing.T) {
+	opener, _, svc, _ := newTestService(t)
+	if err := svc.Open(t.Context(), "hold-1", "ep"); err != nil {
+		t.Fatal(err)
+	}
+	if opener.lifetimes[0] != Lifetime {
+		t.Fatalf("asked for %s, want %s", opener.lifetimes[0], Lifetime)
+	}
+	frame, err := svc.Snapshot(t.Context(), "hold-1")
+	if err != nil || frame.JPEG[2] != 1 {
+		t.Fatalf("Snapshot = %v, %v", frame.JPEG, err)
+	}
+	status, ok := svc.Status("hold-1")
+	if !ok || !status.Live || status.LastFrame == nil {
+		t.Fatalf("status = %+v, %v", status, ok)
+	}
+}
+
+func TestRenewalSwapsStreamsBeforeTheSessionEnds(t *testing.T) {
+	opener, fake, svc, lost := newTestService(t)
+	if err := svc.Open(t.Context(), "hold-1", "ep"); err != nil {
+		t.Fatal(err)
+	}
+	fake.Advance(Lifetime - renewBefore)
+	if len(opener.streams) != 2 {
+		t.Fatalf("opened %d streams, want a renewal", len(opener.streams))
+	}
+	if !opener.stream(0).isClosed() {
+		t.Fatal("the old stream stayed open after renewal")
+	}
+	frame, err := svc.Snapshot(t.Context(), "hold-1")
+	if err != nil || frame.JPEG[2] != 2 {
+		t.Fatalf("Snapshot after renewal = %v, %v", frame.JPEG, err)
+	}
+	status, _ := svc.Status("hold-1")
+	if status.Renewals != 1 || !status.Live {
+		t.Fatalf("status = %+v", status)
+	}
+	select {
+	case call := <-lost:
+		t.Fatalf("renewal reported a lost camera: %+v", call)
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
+func TestAStreamClosedByTheFarSideIsPreempted(t *testing.T) {
+	opener, _, svc, lost := newTestService(t)
+	if err := svc.Open(t.Context(), "hold-1", "ep"); err != nil {
+		t.Fatal(err)
+	}
+	opener.stream(0).end()
+	select {
+	case call := <-lost:
+		if call.holdID != "hold-1" || call.reason != holds.ReasonPreempted {
+			t.Fatalf("lost = %+v", call)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("a preempted stream was not reported")
+	}
+	_, err := svc.Snapshot(t.Context(), "hold-1")
+	if !IsUnavailable(err) {
+		t.Fatalf("Snapshot after preemption = %v, want camera_unavailable", err)
+	}
+}
+
+func TestAFailedRenewalLosesTheCamera(t *testing.T) {
+	opener, fake, svc, lost := newTestService(t)
+	if err := svc.Open(t.Context(), "hold-1", "ep"); err != nil {
+		t.Fatal(err)
+	}
+	opener.mu.Lock()
+	opener.fail = errors.New("camera refused")
+	opener.mu.Unlock()
+	fake.Advance(Lifetime - renewBefore)
+	select {
+	case call := <-lost:
+		if call.reason != holds.ReasonEndpointError {
+			t.Fatalf("lost = %+v", call)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("a failed renewal was not reported")
+	}
+	if !opener.stream(0).isClosed() {
+		t.Fatal("the expiring stream stayed open")
+	}
+}
+
+func TestCloseIsNotAPreemption(t *testing.T) {
+	opener, fake, svc, lost := newTestService(t)
+	if err := svc.Open(t.Context(), "hold-1", "ep"); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Close(t.Context(), "hold-1", holds.Ending{Reason: holds.ReasonReleased}); err != nil {
+		t.Fatal(err)
+	}
+	if !opener.stream(0).isClosed() {
+		t.Fatal("Close left the stream open")
+	}
+	fake.Advance(Lifetime)
+	if len(opener.streams) != 1 {
+		t.Fatal("a closed camera renewed")
+	}
+	select {
+	case call := <-lost:
+		t.Fatalf("Close reported a lost camera: %+v", call)
+	case <-time.After(50 * time.Millisecond):
+	}
+	if _, ok := svc.Status("hold-1"); ok {
+		t.Fatal("a closed camera still has a status")
+	}
+}
+
+func TestAFrameErrorIsCameraUnavailable(t *testing.T) {
+	opener, _, svc, _ := newTestService(t)
+	if err := svc.Open(t.Context(), "hold-1", "ep"); err != nil {
+		t.Fatal(err)
+	}
+	opener.stream(0).err = errors.New("no frame yet")
+	if _, err := svc.Snapshot(t.Context(), "hold-1"); !IsUnavailable(err) {
+		t.Fatalf("Snapshot = %v, want camera_unavailable", err)
+	}
+	if _, err := svc.Snapshot(t.Context(), "hold-2"); !IsUnavailable(err) {
+		t.Fatalf("Snapshot of an unknown hold = %v, want camera_unavailable", err)
+	}
+}

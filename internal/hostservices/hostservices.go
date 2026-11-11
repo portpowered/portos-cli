@@ -1,5 +1,5 @@
 // Package hostservices composes the services the session host serves (holds,
-// motion, messages) and adapts them to the host's own interfaces.
+// motion, camera, messages) and adapts them to the host's own interfaces.
 package hostservices
 
 import (
@@ -12,6 +12,7 @@ import (
 	"github.com/portpowered/portos-cli/internal/host"
 	"github.com/portpowered/portos-cli/internal/keepalive"
 	"github.com/portpowered/portos-cli/internal/portos"
+	"github.com/portpowered/portos-cli/internal/services/camera"
 	"github.com/portpowered/portos-cli/internal/services/holds"
 	"github.com/portpowered/portos-cli/internal/services/messages"
 	"github.com/portpowered/portos-cli/internal/services/motion"
@@ -29,6 +30,8 @@ type Options struct {
 	Portos     portos.Client
 	Keepalive  keepalive.Mode
 	LoginCheck holds.LoginCheck
+	// Camera opens held camera streams; without it holds cannot cover the camera.
+	Camera camera.Opener
 }
 
 // Built is what the host runs with.
@@ -49,11 +52,19 @@ func New(opts Options) Built {
 		defer cancel()
 		_ = holdSvc.Release(ctx, holdID, reason, detail)
 	})
-	holdSvc = holds.New(opts.Clock, map[holds.Kind]holds.Session{holds.KindMotion: motionSvc}, opts.LoginCheck)
+	sessions := map[holds.Kind]holds.Session{holds.KindMotion: motionSvc}
+	var cameraSvc camera.Service
+	if opts.Camera != nil {
+		cameraSvc = camera.New(opts.Camera, opts.Clock, func(holdID string, reason holds.Reason, detail string) {
+			endCameraOnlyHold(holdSvc, holdID, reason, detail)
+		})
+		sessions[holds.KindCamera] = cameraSvc
+	}
+	holdSvc = holds.New(opts.Clock, sessions, opts.LoginCheck)
 	return Built{
 		Services: host.Services{
-			Holds:    &holdAdapter{holds: holdSvc, motion: motionSvc},
-			Messages: messages.New(holdSvc, motionSvc, opts.Clock),
+			Holds:    &holdAdapter{holds: holdSvc, motion: motionSvc, camera: cameraSvc},
+			Messages: messages.New(holdSvc, motionSvc, snapshotter{camera: cameraSvc}, opts.Clock),
 		},
 		OnShutdown: func(ctx context.Context) {
 			holdSvc.EndAll(ctx, holds.ReasonHostShutdown)
@@ -64,6 +75,30 @@ func New(opts Options) Built {
 			holdSvc.EndAll(ctx, holds.ReasonHostPaused)
 		},
 	}
+}
+
+// endCameraOnlyHold ends a hold whose only session was the camera that just
+// stopped. A hold that also drives the robot keeps going; its snapshots answer
+// camera_unavailable until the caller holds the camera again.
+func endCameraOnlyHold(holdSvc holds.Service, holdID string, reason holds.Reason, detail string) {
+	h, err := holdSvc.Get(holdID)
+	if err != nil || len(h.Kinds) != 1 || h.Kinds[0] != holds.KindCamera {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), fatalReleaseTimeout)
+	defer cancel()
+	_ = holdSvc.Release(ctx, holdID, reason, detail)
+}
+
+// snapshotter serves the messages service's snapshots from the camera.
+type snapshotter struct{ camera camera.Service }
+
+func (s snapshotter) Snapshot(ctx context.Context, holdID string) ([]byte, time.Time, error) {
+	if s.camera == nil {
+		return nil, time.Time{}, &holds.Error{Code: holds.CodeCameraUnavailable, Message: "this session host has no camera"}
+	}
+	frame, err := s.camera.Snapshot(ctx, holdID)
+	return frame.JPEG, frame.CapturedAt, err
 }
 
 // LoginCheck returns the check holds run before opening: the stored
@@ -86,16 +121,18 @@ func LoginCheck(storage auth.TokenStorage) holds.LoginCheck {
 type holdAdapter struct {
 	holds  holds.Service
 	motion motion.Service
+	camera camera.Service
 }
 
 var _ host.HoldService = (*holdAdapter)(nil)
 
 func (a *holdAdapter) status(h holds.Hold) host.HoldStatus {
 	kinds := make([]string, len(h.Kinds))
-	hasMotion := false
+	hasMotion, hasCamera := false, false
 	for i, k := range h.Kinds {
 		kinds[i] = string(k)
 		hasMotion = hasMotion || k == holds.KindMotion
+		hasCamera = hasCamera || k == holds.KindCamera
 	}
 	out := host.HoldStatus{
 		ID:             h.ID,
@@ -114,6 +151,14 @@ func (a *holdAdapter) status(h holds.Hold) host.HoldStatus {
 		out.Motion = &host.MotionStatus{
 			SeqNum: st.SeqNum, LastMoveAt: st.LastMoveAt, Pose: st.LastPose,
 			KeepaliveMode: st.KeepaliveMode, Pending: st.Pending,
+		}
+	}
+	if hasCamera && a.camera != nil && h.State != holds.StateEnded {
+		if st, ok := a.camera.Status(h.ID); ok {
+			out.Camera = &host.CameraStatus{
+				Live: st.Live, OpenedAt: st.OpenedAt, RenewsAt: st.RenewsAt, Renewals: st.Renewals,
+				LastFrameAt: st.LastFrame, LostReason: st.LostReason,
+			}
 		}
 	}
 	return out

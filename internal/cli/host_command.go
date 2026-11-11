@@ -9,6 +9,7 @@ import (
 	apiclient "github.com/portpowered/portos-cli/internal/api_client"
 	"github.com/portpowered/portos-cli/internal/auth"
 	"github.com/portpowered/portos-cli/internal/clock"
+	"github.com/portpowered/portos-cli/internal/commands"
 	"github.com/portpowered/portos-cli/internal/config"
 	"github.com/portpowered/portos-cli/internal/host"
 	"github.com/portpowered/portos-cli/internal/hostservices"
@@ -23,11 +24,12 @@ type HostCommand struct {
 	configProvider *config.ManagerProvider
 	apiClient      apiclient.Client
 	tokens         auth.TokenStorage
+	recorder       *commands.Recorder
 }
 
 // NewHostCommand creates the hidden host command.
-func NewHostCommand(configProvider *config.ManagerProvider, apiClient apiclient.Client, tokens auth.TokenStorage) *HostCommand {
-	return &HostCommand{configProvider: configProvider, apiClient: apiClient, tokens: tokens}
+func NewHostCommand(configProvider *config.ManagerProvider, apiClient apiclient.Client, tokens auth.TokenStorage, recorder *commands.Recorder) *HostCommand {
+	return &HostCommand{configProvider: configProvider, apiClient: apiClient, tokens: tokens, recorder: recorder}
 }
 
 // Generate returns the cobra command for the session host.
@@ -49,6 +51,7 @@ func (c *HostCommand) Generate() *cobra.Command {
 				Portos:     portos.New(c.apiClient.Messages()),
 				Keepalive:  keepalive.Default,
 				LoginCheck: hostservices.LoginCheck(c.tokens),
+				Camera:     &heldCameraOpener{recorder: c.recorder, configProvider: c.configProvider},
 			})
 			err = host.Run(ctx, host.Options{
 				ConfigDir:  manager.ConfigDir(),

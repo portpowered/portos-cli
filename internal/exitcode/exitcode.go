@@ -36,6 +36,7 @@ var providerCodeExits = map[string]int{
 	"hold_ended":                          ExitHold,
 	"hold_requires_refreshable_login":     ExitHold,
 	"camera_refused":                      ExitCamera,
+	"camera_unavailable":                  ExitCamera,
 	"camera_pin_required":                 ExitCamera,
 }
 

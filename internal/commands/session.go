@@ -16,8 +16,11 @@ import (
 	"go.uber.org/zap"
 )
 
-// hostKindMotion is the hold kind `--motion` asks for.
-const hostKindMotion = "motion"
+// Hold kinds `--motion` and `--camera` ask for.
+const (
+	hostKindMotion = "motion"
+	hostKindCamera = "camera"
+)
 
 // SessionHost is the part of the session host client the session commands use.
 type SessionHost interface {
@@ -59,6 +62,7 @@ func NewSessionCommand(formatter output.Formatter, logger *logging.LoggerRef, co
 type HoldParams struct {
 	EndpointID string
 	Motion     bool
+	Camera     bool
 	// DeadMan is how long the hold lives without a command; zero uses the host default.
 	DeadMan time.Duration
 }
@@ -79,8 +83,15 @@ func (c *SessionCommand) Hold(ctx context.Context, params HoldParams) error {
 	if params.EndpointID == "" {
 		return exitcode.NewInvalidArgument(errors.New("endpoint ID is required"))
 	}
-	if !params.Motion {
-		return exitcode.NewInvalidArgument(errors.New("name what to hold: --motion"))
+	var kinds []string
+	if params.Motion {
+		kinds = append(kinds, hostKindMotion)
+	}
+	if params.Camera {
+		kinds = append(kinds, hostKindCamera)
+	}
+	if len(kinds) == 0 {
+		return exitcode.NewInvalidArgument(errors.New("name what to hold: --motion, --camera or both"))
 	}
 	if params.DeadMan < 0 {
 		return exitcode.NewInvalidArgument(errors.New("--dead-man must not be negative"))
@@ -96,7 +107,7 @@ func (c *SessionCommand) Hold(ctx context.Context, params HoldParams) error {
 	c.logger.Logger().Info("opening hold", zap.String("endpoint_id", params.EndpointID))
 	opened, err := host.OpenHold(ctx, hostclient.OpenHoldRequest{
 		EndpointID:     params.EndpointID,
-		Kinds:          []string{hostKindMotion},
+		Kinds:          kinds,
 		DeadManSeconds: int(params.DeadMan / time.Second),
 	})
 	if err != nil {

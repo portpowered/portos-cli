@@ -37,7 +37,7 @@ func NewSessionHoldCommand(command *commands.SessionCommand) *SessionHoldCommand
 
 // Generate returns the cobra command for hold.
 func (c *SessionHoldCommand) Generate() *cobra.Command {
-	var motion bool
+	var motion, camera bool
 	var deadMan time.Duration
 	cmd := &cobra.Command{
 		Short: "Open a hold on an endpoint and print its lease",
@@ -49,10 +49,11 @@ The host ends the hold, sending the robot home, when no command arrives for
 		Example: `  port session hold ep/0abc --motion --dead-man 10m`,
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return c.command.Hold(cmd.Context(), commands.HoldParams{EndpointID: args[0], Motion: motion, DeadMan: deadMan})
+			return c.command.Hold(cmd.Context(), commands.HoldParams{EndpointID: args[0], Motion: motion, Camera: camera, DeadMan: deadMan})
 		},
 	}
 	cmd.Flags().BoolVar(&motion, "motion", false, "Hold the endpoint's remote-control session")
+	cmd.Flags().BoolVar(&camera, "camera", false, "Hold the endpoint's camera session, so snapshots under the lease skip opening a new one")
 	cmd.Flags().DurationVar(&deadMan, "dead-man", 0, "End the hold after this long without a command (default 10m)")
 	return cmd
 }
@@ -70,7 +71,7 @@ func NewSessionStatusCommand(command *commands.SessionCommand) *SessionStatusCom
 // Generate returns the cobra command for status.
 func (c *SessionStatusCommand) Generate() *cobra.Command {
 	return &cobra.Command{
-		Short:   "Show the holds, with motion state and how ended ones ended",
+		Short:   "Show the holds, with motion and camera state and how ended ones ended",
 		Example: `  port session status`,
 		Args:    cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {

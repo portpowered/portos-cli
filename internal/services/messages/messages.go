@@ -1,11 +1,13 @@
 // Package messages answers the capability messages a caller sends to the
-// session host under a hold's lease. Only the hold's own capability is served:
-// moves go to the motion session; session messages belong to the hold.
+// session host under a hold's lease. Only the hold's own capabilities are
+// served: moves go to the motion session, snapshots to the held camera, and
+// session messages belong to the hold.
 package messages
 
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -25,6 +27,11 @@ type Mover interface {
 	Move(ctx context.Context, holdID string, body map[string]any) (*api.MessageRequest, error)
 }
 
+// Snapshotter returns the newest frame of a hold's camera as JPEG.
+type Snapshotter interface {
+	Snapshot(ctx context.Context, holdID string) (jpeg []byte, capturedAt time.Time, err error)
+}
+
 // Service dispatches one message sent to the host.
 type Service interface {
 	// Dispatch routes the message. A refusal by the host (a missing lease, a
@@ -34,14 +41,15 @@ type Service interface {
 }
 
 type service struct {
-	auth  Authorizer
-	mover Mover
-	clock clock.Clock
+	auth      Authorizer
+	mover     Mover
+	snapshots Snapshotter
+	clock     clock.Clock
 }
 
 // New returns a messages Service.
-func New(auth Authorizer, mover Mover, c clock.Clock) Service {
-	return &service{auth: auth, mover: mover, clock: c}
+func New(auth Authorizer, mover Mover, snapshots Snapshotter, c clock.Clock) Service {
+	return &service{auth: auth, mover: mover, snapshots: snapshots, clock: c}
 }
 
 const (
@@ -56,8 +64,11 @@ func (s *service) Dispatch(ctx context.Context, lease string, req *api.CreateMes
 	}
 	endpoint := req.Target.Id
 	header := req.Message.Header
+	if header.Namespace == api.INTERFACE_PORTOS_SNAPSHOT {
+		return s.snapshot(ctx, lease, endpoint, header.Name)
+	}
 	if header.Namespace != api.INTERFACE_PORTOS_REMOTE_CONTROL {
-		return s.refuse(endpoint, holds.CodeNotServedByHold, "the session host serves only remote-control for a held endpoint; send "+header.Namespace+"/"+header.Name+" without the lease"), nil
+		return s.refuse(endpoint, holds.CodeNotServedByHold, "the session host serves only remote-control and snapshot for a held endpoint; send "+header.Namespace+"/"+header.Name+" without the lease"), nil
 	}
 	switch header.Name {
 	case nameStartSession, nameEndSession:
@@ -91,6 +102,43 @@ func (s *service) Dispatch(ctx context.Context, lease string, req *api.CreateMes
 	}
 }
 
+// snapshot serves get-snapshot from the held camera. The image is always
+// inline: the host has no URL to offer.
+func (s *service) snapshot(ctx context.Context, lease, endpoint, name string) (*api.MessageRequest, error) {
+	if name != api.INTERFACE_PORTOS_SNAPSHOT_GET_SNAPSHOT {
+		return s.refuse(endpoint, holds.CodeNotServedByHold, "the hold serves only get-snapshot, not "+name), nil
+	}
+	hold, err := s.auth.Authorize(lease, endpoint, holds.KindCamera)
+	if err == nil {
+		var jpeg []byte
+		var capturedAt time.Time
+		if jpeg, capturedAt, err = s.snapshots.Snapshot(ctx, hold.ID); err == nil {
+			return s.snapshotReply(endpoint, jpeg, capturedAt), nil
+		}
+	}
+	var holdErr *holds.Error
+	if errors.As(err, &holdErr) {
+		return s.refuse(endpoint, holdErr.Code, holdErr.Message), nil
+	}
+	return nil, fmt.Errorf("messages: snapshot: %w", err)
+}
+
+func (s *service) snapshotReply(endpoint string, jpeg []byte, capturedAt time.Time) *api.MessageRequest {
+	size := len(jpeg)
+	message := api.NewSnapshotInterfaceGetSnapshotResponseMessage(api.SnapshotInterfaceGetSnapshotResponseMessage{
+		Image:        api.MediaContent{MimeType: api.Imagejpeg, Data: &jpeg, ByteLength: &size},
+		TimeOfSample: capturedAt.UTC(),
+	})
+	return &api.MessageRequest{
+		Id:                  "host-" + uuid.NewString(),
+		Status:              api.SUCCEEDED,
+		Deadline:            s.clock.Now(),
+		SyncDeadlineSeconds: 1,
+		Results:             []api.MessageRequestResult{{TargetId: endpoint, Message: &message}},
+		Errors:              []api.MessageRequestError{},
+	}
+}
+
 // refuse builds the Port OS reply for a host-side refusal, so callers and
 // exitcode.Code treat it like any rejected message.
 func (s *service) refuse(endpointID, code, message string) *api.MessageRequest {
@@ -107,6 +155,8 @@ func Refusal(now time.Time, endpointID, code, message string) *api.MessageReques
 		errCode, family = api.ErrorCodePRECONDITIONREQUIRED, api.ErrorFamilyPRECONDITIONREQUIRED
 	case holds.CodeNotServedByHold:
 		errCode, family = api.ErrorCodeUNSUPPORTEDOPERATION, api.ErrorFamilyREQUESTINVALID
+	case holds.CodeCameraUnavailable:
+		errCode, family = api.ErrorCodeSERVICEUNAVAILABLE, api.ErrorFamilySERVICEUNAVAILABLE
 	}
 	return &api.MessageRequest{
 		Id:                  "host-" + uuid.NewString(),

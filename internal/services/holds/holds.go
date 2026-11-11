@@ -41,6 +41,8 @@ const (
 	ReasonAuthRejected           Reason = "auth-rejected"
 	ReasonEndpointError          Reason = "endpoint-error"
 	ReasonRemoteControlNotActive Reason = "remote-control-not-active"
+	// ReasonPreempted ends a camera-only hold whose stream another viewer took.
+	ReasonPreempted Reason = "preempted"
 )
 
 // State is where a hold is in its life.
@@ -63,6 +65,9 @@ const (
 	CodeHoldRequiresRefreshableLogin = "hold_requires_refreshable_login"
 	CodeHoldEnded                    = "hold_ended"
 	CodeInvalidRequest               = "invalid_request"
+	// CodeCameraUnavailable is a snapshot the held camera cannot serve: another
+	// viewer took the stream, renewal failed, or no frame could be decoded.
+	CodeCameraUnavailable = "camera_unavailable"
 )
 
 // DeadManCloseTimeout bounds how long a dead-man ending waits for the sessions

@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -64,6 +65,25 @@ func TestSessionHoldPrintsLease(t *testing.T) {
 	}
 	if pose, present := got["pose"]; !present || pose != nil {
 		t.Fatalf("pose = %v (present %v), want an explicit null", pose, present)
+	}
+}
+
+func TestSessionHoldAsksForTheCamera(t *testing.T) {
+	for name, tc := range map[string]struct {
+		params HoldParams
+		want   []string
+	}{
+		"camera":            {HoldParams{EndpointID: "ep/1", Camera: true}, []string{"camera"}},
+		"motion and camera": {HoldParams{EndpointID: "ep/1", Motion: true, Camera: true}, []string{"motion", "camera"}},
+	} {
+		host := &fakeSessionHost{}
+		cmd, _ := newTestSessionCommand(host)
+		if err := cmd.Hold(t.Context(), tc.params); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if got := host.opened[0].Kinds; strings.Join(got, ",") != strings.Join(tc.want, ",") {
+			t.Fatalf("%s: kinds = %v, want %v", name, got, tc.want)
+		}
 	}
 }
 

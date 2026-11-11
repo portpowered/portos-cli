@@ -42,12 +42,13 @@ cp -rn "portos-cli-${VERSION#v}/skills/robot-navigation/tricks" ~/robot/
 | Command | Does |
 | --- | --- |
 | `port session hold <robot> --motion --json` | Drives the robot off its dock into remote control and prints `{holdId, lease}`. Ends by itself after `--dead-man` (10 minutes) with no command |
-| `port session status --json` | The holds, their state, and why an ended hold ended |
+| `port session hold <robot> --motion --camera --json` | The same, and keeps the camera open: snapshots under the lease take about a second instead of a new camera connection each time. Use it when a trick looks often |
+| `port session status --json` | The holds, their state, the camera's state, and why an ended hold ended |
 | `port session release <holdId>` | Ends the session; the robot returns to its dock |
 | `port message remote-control/move <robot> --wait --body '{"velocity":0.2,"omega":0,"duration":5000}' --json` | One move. The reply body has `pose`, `distanceMetres` and `turnedDegrees` |
 | `port message move <robot> "rotate 90, forward 1m"` | The same moves from a short grammar, for one-off use |
 | `port endpoint attribute <robot> spatial/pose --force` | Reads the pose from the robot |
-| `port message snapshot <robot> --output frame.jpg` | Saves the camera's current frame |
+| `port message snapshot <robot> --output frame.jpg` | Saves the camera's current frame (from the held camera when your hold has one) |
 | `port group list --expand interfaces.attributes --json` | Your groups; each room's `spatial/geometry` attribute holds its shape and map frame. Follow `next_token` for more pages |
 
 A move: `velocity` in m/s (negative reverses), `omega` in rad/s (positive turns left), `duration` in whole seconds as milliseconds (1000 to 5000 on the S8). Distance is velocity times duration; the turn is omega times duration. The robot rejects a drive under 5 cm and a turn in place under 5 degrees. The pose is metres in the map's frame with heading 0 along +x, growing counter-clockwise.
@@ -140,4 +141,4 @@ python3 ~/robot/tricks/lib/render_map.py scene.json map.png --around 3.2,1.5 --r
 - **A move keeps coming back not carried out:** something blocks that way. Look (`snapshot`), back off (`forward(-0.2)`), turn and go around. Record the trap.
 - **The pose looks wrong** (the robot was picked up, or the map changed): take a frame of a known view such as the dock, compare it with your reference photo, and re-teach places if the frame changed.
 - **A kept route fails** (a closed door, a moved chair): only the camera says why. Record the failure on the card and teach an alternative.
-- **The camera refuses** (exit 14): another viewer may hold it (the app, a live view). Carry on without frames or try again shortly.
+- **The camera refuses** (exit 14): another viewer may hold it (the app, a live view). Under a `--camera` hold this means the held camera was taken away; `port session status` shows `lostReason`. The robot stays held; carry on without frames, or release and hold again.

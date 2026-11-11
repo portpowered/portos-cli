@@ -1294,7 +1294,7 @@ var Commands = map[string]CommandDoc{
 			"hold",
 		},
 		Summary:            "Open a hold on an endpoint and print its lease",
-		Description:        "Start the session host if needed, open a hold on the endpoint and print the hold ID, lease, endpoint, kinds and pose. The host ends the hold, sending the robot home, when no command arrives for the dead-man period, when the machine sleeps, or when the robot leaves remote control.",
+		Description:        "Start the session host if needed, open a hold on the endpoint and print the hold ID, lease, endpoint, kinds and pose. With --camera the host keeps the camera session open, so snapshots under the lease come from it in about a second; another viewer opening the camera takes it away. The host ends the hold, sending the robot home, when no command arrives for the dead-man period, when the machine sleeps, or when the robot leaves remote control.",
 		Category:           "session",
 		CanonicalReference: "api/cli/commands.yaml",
 		Arguments: []ArgumentDoc{
@@ -1315,6 +1315,14 @@ var Commands = map[string]CommandDoc{
 				Description: "Hold the endpoint's remote-control session.",
 			},
 			{
+				Name:        "camera",
+				Shorthand:   "",
+				Type:        "bool",
+				Default:     "false",
+				Required:    false,
+				Description: "Hold the endpoint's camera session, so snapshots under the lease skip opening a new one.",
+			},
+			{
 				Name:        "dead-man",
 				Shorthand:   "",
 				Type:        "string",
@@ -1327,6 +1335,11 @@ var Commands = map[string]CommandDoc{
 			{
 				Description: "Hold a robot's motion for ten minutes of silence.",
 				Invocation:  "port session hold ep/a1b2c3d4 --motion --dead-man 10m",
+				Output:      "",
+			},
+			{
+				Description: "Hold the robot and its camera, then take a snapshot from the held camera.",
+				Invocation:  "port session hold ep/a1b2c3d4 --motion --camera && port message snapshot ep/a1b2c3d4 frame.jpg --lease <lease>",
 				Output:      "",
 			},
 			{
@@ -1372,7 +1385,7 @@ var Commands = map[string]CommandDoc{
 			"status",
 		},
 		Summary:            "Show the holds",
-		Description:        "Show the holds with their motion state and, for ended holds, how they ended.",
+		Description:        "Show the holds with their motion and camera state and, for ended holds, how they ended.",
 		Category:           "session",
 		CanonicalReference: "api/cli/commands.yaml",
 		Arguments: []ArgumentDoc{
