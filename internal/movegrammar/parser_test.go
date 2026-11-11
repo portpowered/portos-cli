@@ -6,7 +6,37 @@ import (
 )
 
 func TestParse_SingleForward(t *testing.T) {
-	instructions, err := Parse("forward 1m")
+	// 1 m needs 3.3 s at 0.3 m/s: four whole seconds at 0.25 m/s.
+	instructions, err := Parse("forward 1m", DefaultBounds)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(instructions) != 1 {
+		t.Fatalf("expected 1 instruction, got %d", len(instructions))
+	}
+	inst := instructions[0]
+	assertFloat(t, "velocity", inst.Velocity, 0.25)
+	assertFloat(t, "omega", inst.Omega, 0.0)
+	assertInt(t, "duration", inst.Duration, 4000)
+}
+
+func TestParse_SingleBackward(t *testing.T) {
+	instructions, err := Parse("backward 0.5m", DefaultBounds)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(instructions) != 1 {
+		t.Fatalf("expected 1 instruction, got %d", len(instructions))
+	}
+	inst := instructions[0]
+	assertFloat(t, "velocity", inst.Velocity, -0.25)
+	assertFloat(t, "omega", inst.Omega, 0.0)
+	assertInt(t, "duration", inst.Duration, 2000)
+}
+
+func TestParse_LeftArc(t *testing.T) {
+	// 1 m on a 0.3 m circle turns 3.33 rad, which needs 4.2 s at 0.8 rad/s: five seconds.
+	instructions, err := Parse("left 1m", DefaultBounds)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -15,12 +45,28 @@ func TestParse_SingleForward(t *testing.T) {
 	}
 	inst := instructions[0]
 	assertFloat(t, "velocity", inst.Velocity, 0.2)
-	assertFloat(t, "omega", inst.Omega, 0.0)
+	assertFloat(t, "omega", inst.Omega, 0.6666)
 	assertInt(t, "duration", inst.Duration, 5000)
 }
 
-func TestParse_SingleBackward(t *testing.T) {
-	instructions, err := Parse("backward 0.5m")
+func TestParse_RightArc(t *testing.T) {
+	// 2 m needs 8.3 s, more than one 5 s move: two equal moves of five seconds.
+	instructions, err := Parse("right 2m", DefaultBounds)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(instructions) != 2 {
+		t.Fatalf("expected 2 instructions, got %d", len(instructions))
+	}
+	for _, inst := range instructions {
+		assertFloat(t, "velocity", inst.Velocity, 0.2)
+		assertFloat(t, "omega", inst.Omega, -0.6666)
+		assertInt(t, "duration", inst.Duration, 5000)
+	}
+}
+
+func TestParse_RotatePositive(t *testing.T) {
+	instructions, err := Parse("rotate 90", DefaultBounds)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -28,57 +74,45 @@ func TestParse_SingleBackward(t *testing.T) {
 		t.Fatalf("expected 1 instruction, got %d", len(instructions))
 	}
 	inst := instructions[0]
-	assertFloat(t, "velocity", inst.Velocity, -0.2)
-	assertFloat(t, "omega", inst.Omega, 0.0)
-	assertInt(t, "duration", inst.Duration, 2500)
-}
-
-func TestParse_LeftArc(t *testing.T) {
-	instructions, err := Parse("left 1m")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	inst := instructions[0]
-	assertFloat(t, "velocity", inst.Velocity, 0.15)
-	assertFloat(t, "omega", inst.Omega, 0.5)
-	assertInt(t, "duration", inst.Duration, 6667)
-}
-
-func TestParse_RightArc(t *testing.T) {
-	instructions, err := Parse("right 2m")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	inst := instructions[0]
-	assertFloat(t, "velocity", inst.Velocity, 0.15)
-	assertFloat(t, "omega", inst.Omega, -0.5)
-	assertInt(t, "duration", inst.Duration, 13333)
-}
-
-func TestParse_RotatePositive(t *testing.T) {
-	instructions, err := Parse("rotate 90")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	inst := instructions[0]
 	assertFloat(t, "velocity", inst.Velocity, 0.0)
-	assertFloat(t, "omega", inst.Omega, 1.0)
-	assertInt(t, "duration", inst.Duration, 1571)
+	assertFloat(t, "omega", inst.Omega, 0.7853)
+	assertInt(t, "duration", inst.Duration, 2000)
+}
+
+func TestParse_RotateStaysWithinTheTurnRate(t *testing.T) {
+	// The S8 refuses omega above 0.8 rad/s and durations off whole seconds (Spike 3, 2026-11-11).
+	for _, tc := range []struct {
+		input string
+		omega float64
+	}{{"rotate 30", 0.5235}, {"rotate 73", 0.6370}, {"rotate 5", 0.0872}} {
+		instructions, err := Parse(tc.input, DefaultBounds)
+		if err != nil {
+			t.Fatalf("%s: unexpected error: %v", tc.input, err)
+		}
+		inst := instructions[0]
+		assertFloat(t, tc.input+" omega", inst.Omega, tc.omega)
+		if inst.Omega > DefaultBounds.MaxOmega || inst.Duration%DefaultBounds.DurationStepMs != 0 || inst.Duration < DefaultBounds.MinDurationMs {
+			t.Fatalf("%s: %+v is outside the bounds", tc.input, inst)
+		}
+	}
 }
 
 func TestParse_RotateNegative(t *testing.T) {
-	instructions, err := Parse("rotate -90")
+	instructions, err := Parse("rotate -90", DefaultBounds)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	if len(instructions) != 1 {
+		t.Fatalf("expected 1 instruction, got %d", len(instructions))
+	}
 	inst := instructions[0]
 	assertFloat(t, "velocity", inst.Velocity, 0.0)
-	assertFloat(t, "omega", inst.Omega, -1.0)
-	assertInt(t, "duration", inst.Duration, 1571)
+	assertFloat(t, "omega", inst.Omega, -0.7853)
+	assertInt(t, "duration", inst.Duration, 2000)
 }
 
 func TestParse_MultipleInstructions(t *testing.T) {
-	instructions, err := Parse("forward 1m, rotate -90, forward 0.5m")
+	instructions, err := Parse("forward 1m, rotate -90, forward 0.5m", DefaultBounds)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -87,19 +121,17 @@ func TestParse_MultipleInstructions(t *testing.T) {
 	}
 
 	// First: forward 1m
-	assertFloat(t, "inst[0].velocity", instructions[0].Velocity, 0.2)
-	assertFloat(t, "inst[0].omega", instructions[0].Omega, 0.0)
-	assertInt(t, "inst[0].duration", instructions[0].Duration, 5000)
+	assertFloat(t, "inst[0].velocity", instructions[0].Velocity, 0.25)
+	assertInt(t, "inst[0].duration", instructions[0].Duration, 4000)
 
 	// Second: rotate -90
 	assertFloat(t, "inst[1].velocity", instructions[1].Velocity, 0.0)
-	assertFloat(t, "inst[1].omega", instructions[1].Omega, -1.0)
-	assertInt(t, "inst[1].duration", instructions[1].Duration, 1571)
+	assertFloat(t, "inst[1].omega", instructions[1].Omega, -0.7853)
+	assertInt(t, "inst[1].duration", instructions[1].Duration, 2000)
 
 	// Third: forward 0.5m
-	assertFloat(t, "inst[2].velocity", instructions[2].Velocity, 0.2)
-	assertFloat(t, "inst[2].omega", instructions[2].Omega, 0.0)
-	assertInt(t, "inst[2].duration", instructions[2].Duration, 2500)
+	assertFloat(t, "inst[2].velocity", instructions[2].Velocity, 0.25)
+	assertInt(t, "inst[2].duration", instructions[2].Duration, 2000)
 }
 
 func TestParse_UnitVariants(t *testing.T) {
@@ -107,14 +139,14 @@ func TestParse_UnitVariants(t *testing.T) {
 		input    string
 		duration int
 	}{
-		{"forward 1m", 5000},
-		{"forward 1meter", 5000},
-		{"forward 1meters", 5000},
+		{"forward 1m", 4000},
+		{"forward 1meter", 4000},
+		{"forward 1meters", 4000},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.input, func(t *testing.T) {
-			instructions, err := Parse(tc.input)
+			instructions, err := Parse(tc.input, DefaultBounds)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -124,7 +156,7 @@ func TestParse_UnitVariants(t *testing.T) {
 }
 
 func TestParse_WhitespaceHandling(t *testing.T) {
-	instructions, err := Parse("  forward 1m ,  rotate 90  ")
+	instructions, err := Parse("  forward 1m ,  rotate 90  ", DefaultBounds)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -134,81 +166,99 @@ func TestParse_WhitespaceHandling(t *testing.T) {
 }
 
 func TestParse_CaseInsensitiveDirection(t *testing.T) {
-	instructions, err := Parse("Forward 1m")
+	instructions, err := Parse("Forward 1m", DefaultBounds)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	assertFloat(t, "velocity", instructions[0].Velocity, 0.2)
+	assertFloat(t, "velocity", instructions[0].Velocity, 0.25)
 }
 
 // Error cases
 
 func TestParse_EmptyInput(t *testing.T) {
-	_, err := Parse("")
+	_, err := Parse("", DefaultBounds)
 	assertError(t, err, "no movement instructions provided")
 }
 
 func TestParse_WhitespaceOnly(t *testing.T) {
-	_, err := Parse("   ")
+	_, err := Parse("   ", DefaultBounds)
 	assertError(t, err, "no movement instructions provided")
 }
 
 func TestParse_UnknownDirection(t *testing.T) {
-	_, err := Parse("sideways 1m")
+	_, err := Parse("sideways 1m", DefaultBounds)
 	assertError(t, err, "unknown direction \"sideways\"")
 }
 
 func TestParse_MissingDistance(t *testing.T) {
-	_, err := Parse("forward")
+	_, err := Parse("forward", DefaultBounds)
 	assertError(t, err, "missing distance for \"forward\"")
 }
 
 func TestParse_MissingAngle(t *testing.T) {
-	_, err := Parse("rotate")
+	_, err := Parse("rotate", DefaultBounds)
 	assertError(t, err, "missing angle for rotate")
 }
 
 func TestParse_ZeroDistance(t *testing.T) {
-	_, err := Parse("forward 0m")
+	_, err := Parse("forward 0m", DefaultBounds)
 	assertError(t, err, "distance must be greater than zero")
 }
 
 func TestParse_ZeroRotation(t *testing.T) {
-	_, err := Parse("rotate 0")
+	_, err := Parse("rotate 0", DefaultBounds)
 	assertError(t, err, "rotation angle must not be zero")
 }
 
 func TestParse_NegativeDistance(t *testing.T) {
-	_, err := Parse("forward -1m")
+	_, err := Parse("forward -1m", DefaultBounds)
 	assertError(t, err, "distance must be positive")
 }
 
 func TestParse_MissingUnit(t *testing.T) {
-	_, err := Parse("forward 1")
+	_, err := Parse("forward 1", DefaultBounds)
 	assertError(t, err, "missing distance for direction")
 }
 
 func TestParse_MalformedNumber(t *testing.T) {
-	_, err := Parse("rotate abc")
+	_, err := Parse("rotate abc", DefaultBounds)
 	assertError(t, err, "could not parse \"abc\"")
 }
 
 func TestParse_DurationExceedsLimit(t *testing.T) {
-	// forward 7m at 0.2 m/s = 35000ms > 30000ms limit
-	_, err := Parse("forward 7m")
+	// 10 m needs seven 5 s moves: 35 s, past the 30 s limit
+	_, err := Parse("forward 10m", DefaultBounds)
 	assertError(t, err, "exceeds the 30s limit")
 }
 
 func TestParse_RotationDurationExceedsLimit(t *testing.T) {
-	// 2000 degrees at 1.0 rad/s = ~34907ms > 30000ms
-	_, err := Parse("rotate 2000")
+	// 2000 degrees at 0.8 rad/s needs 44 s
+	_, err := Parse("rotate 2000", DefaultBounds)
 	assertError(t, err, "exceeds the 30s limit")
 }
 
-func TestParse_VerySmallDistance(t *testing.T) {
-	// 0.01m at 0.2 m/s = 50ms < 100ms minimum
-	_, err := Parse("forward 0.01m")
-	assertError(t, err, "below the 100ms minimum")
+func TestParse_LongPhraseIsSplitEvenly(t *testing.T) {
+	// 7 m needs 23.3 s: five moves of five seconds at 0.28 m/s.
+	instructions, err := Parse("forward 7m", DefaultBounds)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(instructions) != 5 {
+		t.Fatalf("expected 5 instructions, got %d", len(instructions))
+	}
+	for _, inst := range instructions {
+		assertFloat(t, "velocity", inst.Velocity, 0.28)
+		assertInt(t, "duration", inst.Duration, 5000)
+	}
+}
+
+func TestParse_ShortPhraseTakesTheShortestDuration(t *testing.T) {
+	instructions, err := Parse("forward 0.1m", DefaultBounds)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	assertFloat(t, "velocity", instructions[0].Velocity, 0.1)
+	assertInt(t, "duration", instructions[0].Duration, 1000)
 }
 
 // Helpers

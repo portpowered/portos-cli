@@ -82,7 +82,7 @@ func (c *RecordCommand) Run(ctx context.Context, params RecordParams) error {
 		return errFFmpegMissing
 	}
 
-	sender, err := c.resolver.For(ctx, params.EndpointID, api.INTERFACE_PORTOS_RTC_SESSION)
+	sender, err := c.resolver.For(ctx, params.EndpointID, api.INTERFACE_PORTOS_RTC_SESSION, "")
 	if err != nil {
 		return err
 	}

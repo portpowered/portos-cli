@@ -21,7 +21,7 @@ type Sender interface {
 // Resolver picks the Sender for a message to an endpoint in a capability
 // namespace (a full interface path such as the remote-control one).
 type Resolver interface {
-	For(ctx context.Context, endpointID, namespace string) (Sender, error)
+	For(ctx context.Context, endpointID, namespace, name string) (Sender, error)
 }
 
 // Held reports whether s sends through a session host hold. Under a hold the

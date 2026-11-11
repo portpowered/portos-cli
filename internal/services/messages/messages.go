@@ -27,6 +27,8 @@ type Authorizer interface {
 // Mover runs a move through a hold's motion session.
 type Mover interface {
 	Move(ctx context.Context, holdID string, body map[string]any) (*api.MessageRequest, error)
+	// GoToPoint runs a go-to-point trip through the hold's motion session.
+	GoToPoint(ctx context.Context, holdID string, body map[string]any) (*api.MessageRequest, error)
 }
 
 // Camera serves a hold's camera: its newest frame as JPEG, and Ogg/Opus clips
@@ -60,6 +62,7 @@ const (
 	nameMove         = "move"
 	nameStartSession = "start-session"
 	nameEndSession   = "end-session"
+	nameGoToPoint    = api.INTERFACE_PORTOS_ROBOTIC_VACUUM_CLEANER_GO_TO_POINT
 )
 
 func (s *service) Dispatch(ctx context.Context, lease string, req *api.CreateMessageRequest) (*api.MessageRequest, error) {
@@ -76,8 +79,13 @@ func (s *service) Dispatch(ctx context.Context, lease string, req *api.CreateMes
 	case api.INTERFACE_PORTOS_RTC_SESSION:
 		return s.refuse(endpoint, holds.CodeHoldOwnsSession, "the hold owns the camera session; record it with port message record and the lease, or release the hold first"), nil
 	case api.INTERFACE_PORTOS_REMOTE_CONTROL:
+	case api.INTERFACE_PORTOS_ROBOTIC_VACUUM_CLEANER:
+		if header.Name != nameGoToPoint {
+			return s.refuse(endpoint, holds.CodeNotServedByHold, "the hold serves only go-to-point of the robotic-vacuum-cleaner messages; send "+header.Namespace+"/"+header.Name+" without the lease"), nil
+		}
+		return s.goToPoint(ctx, lease, endpoint, req.Message.Body)
 	default:
-		return s.refuse(endpoint, holds.CodeNotServedByHold, "the session host serves only remote-control, snapshot and media-player play-audio for a held endpoint; send "+header.Namespace+"/"+header.Name+" without the lease"), nil
+		return s.refuse(endpoint, holds.CodeNotServedByHold, "the session host serves only remote-control, go-to-point, snapshot and media-player play-audio for a held endpoint; send "+header.Namespace+"/"+header.Name+" without the lease"), nil
 	}
 	switch header.Name {
 	case nameStartSession, nameEndSession:
@@ -109,6 +117,30 @@ func (s *service) Dispatch(ctx context.Context, lease string, req *api.CreateMes
 	default:
 		return s.refuse(endpoint, holds.CodeNotServedByHold, "the hold serves only move, not "+header.Name), nil
 	}
+}
+
+// goToPoint runs a trip on the hold's motion session. The trip counts as
+// activity for the dead-man: the lease is authorized again once it ends, so the
+// clock restarts from the arrival. A refusal by Port OS is the reply, unchanged.
+func (s *service) goToPoint(ctx context.Context, lease, endpoint string, body map[string]any) (*api.MessageRequest, error) {
+	hold, err := s.auth.Authorize(lease, endpoint, holds.KindMotion)
+	if err == nil {
+		var reply *api.MessageRequest
+		reply, err = s.mover.GoToPoint(ctx, hold.ID, body)
+		if err == nil {
+			_, _ = s.auth.Authorize(lease, endpoint, holds.KindMotion)
+			return reply, nil
+		}
+	}
+	var holdErr *holds.Error
+	if errors.As(err, &holdErr) {
+		_, _ = s.auth.Authorize(lease, endpoint, holds.KindMotion)
+		return s.refuse(endpoint, holdErr.Code, holdErr.Message), nil
+	}
+	if _, authErr := s.auth.Authorize(lease, endpoint, holds.KindMotion); errors.As(authErr, &holdErr) {
+		return s.refuse(endpoint, holdErr.Code, holdErr.Message), nil
+	}
+	return nil, fmt.Errorf("messages: go-to-point: %w", err)
 }
 
 // snapshot serves get-snapshot from the held camera. The image is always

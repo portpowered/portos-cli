@@ -59,7 +59,7 @@ func dialHost(ctx context.Context, configDir string) (hostAPI, error) {
 }
 
 // For returns the host sender when a live hold on the endpoint covers the
-// namespace, even if no lease was given: the host then answers
+// message (its namespace, or for go-to-point the message itself), even if no lease was given: the host then answers
 // hold_lease_required instead of the cloud racing the hold.
 //
 // A lease means "I operate under a hold". With a lease and a namespace a hold
@@ -67,13 +67,13 @@ func dialHost(ctx context.Context, configDir string) (hostAPI, error) {
 // refuses with hold_ended (an ended hold on the endpoint is known) or
 // hold_not_found (no host, or no hold), so a stale lease cannot drive the
 // robot unheld. Everything else goes to the cloud.
-func (r *resolver) For(ctx context.Context, endpointID, namespace string) (Sender, error) {
+func (r *resolver) For(ctx context.Context, endpointID, namespace, name string) (Sender, error) {
 	dir, err := r.configDir()
 	if err != nil {
 		return nil, err
 	}
 	lease := r.lease()
-	leased := lease != "" && coveredNamespace(namespace)
+	leased := lease != "" && coveredNamespace(namespace, name)
 	hostConn, err := r.dial(ctx, dir)
 	if errors.Is(err, hostclient.ErrNotRunning) {
 		return r.noLiveHold(leased, endpointID, false), nil
@@ -91,7 +91,7 @@ func (r *resolver) For(ctx context.Context, endpointID, namespace string) (Sende
 	_, keyed := endpointid.Key(endpointID)
 	ended := false
 	for _, hold := range holds {
-		if !covers(hold.Kinds, namespace) {
+		if !covers(hold.Kinds, namespace, name) {
 			continue
 		}
 		if hold.State == host.StateEnded {
@@ -120,21 +120,36 @@ func (r *resolver) noLiveHold(leased bool, endpointID string, ended bool) Sender
 	return &refusingSender{endpointID: endpointID, code: host.CodeHoldNotFound, message: "no live hold on " + endpointID + " is running; open one with `port session`"}
 }
 
-func coveredNamespace(namespace string) bool {
-	for _, namespaces := range kindNamespaces {
-		for _, ns := range namespaces {
-			if ns == namespace {
-				return true
-			}
+// kindMessages are single messages a hold kind covers in a namespace the kind
+// does not cover as a whole: go-to-point is the motion hold's, while the rest
+// of the robotic-vacuum-cleaner messages (return-to-dock, say) take the cloud path.
+var kindMessages = map[string][]struct{ namespace, name string }{
+	"motion": {{api.INTERFACE_PORTOS_ROBOTIC_VACUUM_CLEANER, api.INTERFACE_PORTOS_ROBOTIC_VACUUM_CLEANER_GO_TO_POINT}},
+}
+
+func coveredNamespace(namespace, name string) bool {
+	for kind := range kindNamespaces {
+		if covers([]string{kind}, namespace, name) {
+			return true
+		}
+	}
+	for kind := range kindMessages {
+		if covers([]string{kind}, namespace, name) {
+			return true
 		}
 	}
 	return false
 }
 
-func covers(kinds []string, namespace string) bool {
+func covers(kinds []string, namespace, name string) bool {
 	for _, kind := range kinds {
 		for _, ns := range kindNamespaces[kind] {
 			if ns == namespace {
+				return true
+			}
+		}
+		for _, m := range kindMessages[kind] {
+			if m.namespace == namespace && m.name == name {
 				return true
 			}
 		}

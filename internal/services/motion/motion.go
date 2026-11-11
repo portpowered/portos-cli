@@ -31,6 +31,27 @@ const (
 	keepaliveTimeout = 15 * time.Second
 	// closeTimeout bounds the end-session and return-to-dock pair, which runs even if the caller gave up.
 	closeTimeout = 30 * time.Second
+	// TripTimeout is how long GoToPoint waits for the robot to arrive before it
+	// sends stop and fails with CodeGoToPointTimeout.
+	TripTimeout = 180 * time.Second
+	// TripPollInterval is how often GoToPoint reads the operational state while the robot travels.
+	TripPollInterval = time.Second
+	// tripStateFailures is how many state reads in a row may fail before the trip is given up.
+	tripStateFailures = 3
+	// tripCleanupTimeout bounds the stop and start-session sends that follow a trip, which run even if the caller gave up.
+	tripCleanupTimeout = 30 * time.Second
+)
+
+// Provider codes GoToPoint adds to the ones Port OS returns.
+const (
+	// CodeGoToPointFailed is a trip on which the robot reported ERROR.
+	CodeGoToPointFailed = "go_to_point_failed"
+	// CodeGoToPointTimeout is a trip that did not finish within TripTimeout; the robot was told to stop.
+	CodeGoToPointTimeout = "go_to_point_timeout"
+	// CodeGoToPointStateUnavailable is a trip whose operational state could not be read.
+	CodeGoToPointStateUnavailable = "go_to_point_state_unavailable"
+	// CodeGoToPointSessionLost is a trip after which Port OS refused to start the remote-control session again; the hold ends.
+	CodeGoToPointSessionLost = "go_to_point_session_lost"
 )
 
 // Errors a Move can return besides transport errors.
@@ -57,6 +78,22 @@ type Service interface {
 	// to run and returns Port OS's reply unchanged. A reply that reports a failed
 	// move is a reply, not an error.
 	Move(ctx context.Context, holdID string, body map[string]any) (*api.MessageRequest, error)
+	// GoToPoint sends the robot to the point in body (a robotic-vacuum-cleaner
+	// go-to-point body; the frame may be left out and is then the one the robot's
+	// pose reports) as one operation: it ends the remote-control session, sends
+	// go-to-point, waits for the robot to leave GOING_TO_POINT, and starts the
+	// session again so the hold is live for the last metre.
+	//
+	// The trip runs on the hold's goroutine like a move, so a move sent while a
+	// trip is under way waits behind it and runs once the session is back. The
+	// keepalive is silent while the session is down. A refusal by Port OS
+	// (invalid_value, value_out_of_range, map_not_active, go_to_point_not_started)
+	// is a FAILED reply, not an error, and the session is started again. A trip
+	// that fails (CodeGoToPointFailed, CodeGoToPointTimeout,
+	// CodeGoToPointStateUnavailable) is a *holds.Error, again with the session
+	// restarted. On success the reply carries the arrival pose and operational
+	// state, and the pose is cached for LastPose.
+	GoToPoint(ctx context.Context, holdID string, body map[string]any) (*api.MessageRequest, error)
 	// LastPose is the pose from the last SUCCEEDED move or keepalive, and when
 	// it was cached.
 	LastPose(holdID string) (api.SpatialInterfacePoseAttribute, time.Time, bool)
@@ -66,6 +103,7 @@ type Service interface {
 
 type service struct {
 	client  portos.Client
+	state   portos.StateReader
 	clock   clock.Clock
 	mode    keepalive.Mode
 	onFatal func(holdID string, reason holds.Reason, detail string)
@@ -77,14 +115,15 @@ type service struct {
 
 var _ Service = (*service)(nil)
 
-// New returns a motion Service. onFatal is called, on its own goroutine, when a
+// New returns a motion Service. state reads the operational state and pose
+// during a GoToPoint; without it GoToPoint is refused. onFatal is called, on its own goroutine, when a
 // hold's session cannot continue (the robot left remote control, or Port OS
 // rejected the credentials); it may be nil. An unknown mode becomes the default.
-func New(client portos.Client, c clock.Clock, mode keepalive.Mode, onFatal func(holdID string, reason holds.Reason, detail string)) Service {
+func New(client portos.Client, state portos.StateReader, c clock.Clock, mode keepalive.Mode, onFatal func(holdID string, reason holds.Reason, detail string)) Service {
 	if !mode.Valid() {
 		mode = keepalive.Default
 	}
-	return &service{client: client, clock: c, mode: mode, onFatal: onFatal, sessions: map[string]*session{}, opening: map[string]chan struct{}{}}
+	return &service{client: client, state: state, clock: c, mode: mode, onFatal: onFatal, sessions: map[string]*session{}, opening: map[string]chan struct{}{}}
 }
 
 type result struct {
@@ -95,6 +134,7 @@ type result struct {
 type job struct {
 	ctx      context.Context
 	body     map[string]any
+	trip     bool // a go-to-point trip, not a single move
 	done     chan result
 	canceled atomic.Bool
 }
@@ -112,6 +152,8 @@ type session struct {
 	wake     chan struct{}
 	kick     chan struct{}
 	closeReq chan closeRequest
+	closing  chan struct{} // closed when a Close is requested, so a trip in flight gives way
+	closeOne sync.Once
 	exited   chan struct{}
 	closeErr error // set before exited is closed
 
@@ -128,6 +170,7 @@ type session struct {
 	poseAt     time.Time
 	dead       bool
 	closed     bool
+	down       bool // the remote-control session is ended for a trip
 	deadReason holds.Reason
 }
 
@@ -177,7 +220,7 @@ func (m *service) Open(ctx context.Context, holdID, endpointID string) error {
 	s := &session{
 		svc: m, id: holdID, endpoint: endpointID,
 		wake: make(chan struct{}, 1), kick: make(chan struct{}, 1),
-		closeReq: make(chan closeRequest, 1), exited: make(chan struct{}),
+		closeReq: make(chan closeRequest, 1), closing: make(chan struct{}), exited: make(chan struct{}),
 		lastMoveAt: m.clock.Now(),
 	}
 	s.arm()
@@ -196,6 +239,7 @@ func (m *service) Close(ctx context.Context, holdID string, _ holds.Ending) erro
 		return err // nil when the hold was never opened or is already closed and pruned
 	}
 	defer m.prune(holdID, s)
+	s.closeOne.Do(func() { close(s.closing) })
 	select {
 	case <-s.exited:
 		return s.closeErr
@@ -291,6 +335,27 @@ func (m *service) Move(ctx context.Context, holdID string, body map[string]any) 
 	}
 }
 
+func (m *service) GoToPoint(ctx context.Context, holdID string, body map[string]any) (*api.MessageRequest, error) {
+	s, err := m.find(holdID)
+	if err != nil {
+		return nil, err
+	}
+	j := &job{ctx: ctx, body: body, trip: true, done: make(chan result, 1)}
+	s.mu.Lock()
+	if s.closed || s.dead {
+		s.mu.Unlock()
+		return nil, errEnded
+	}
+	s.queue = append(s.queue, j)
+	s.mu.Unlock()
+	signal(s.wake)
+	// A caller that gives up does not leave the robot mid-trip with its session
+	// down: the trip on the hold's goroutine sees the context end, stops the
+	// robot and restarts the session before it frees the queue.
+	r := <-j.done
+	return r.reply, r.err
+}
+
 func (m *service) LastPose(holdID string) (api.SpatialInterfacePoseAttribute, time.Time, bool) {
 	s, err := m.find(holdID)
 	if err != nil {
@@ -384,6 +449,8 @@ func (s *session) runAgent(j *job) {
 		}
 	case s.isDead():
 		r.err = errEnded
+	case j.trip:
+		r.reply, r.err = s.goToPoint(j.ctx, j.body)
 	default:
 		r.reply, r.err = s.send(j.ctx, j.body)
 	}
@@ -403,7 +470,7 @@ func (s *session) isDead() bool {
 // keepalive sends a keepalive move if one is due, then re-arms the timer.
 func (s *session) keepalive(mirror bool) {
 	s.mu.Lock()
-	last, dead := s.lastMoveAt, s.dead
+	last, dead := s.lastMoveAt, s.dead || s.down
 	s.mu.Unlock()
 	if dead {
 		s.pendingMirror = false
@@ -428,7 +495,7 @@ func (s *session) arm() {
 		s.timer = nil
 	}
 	s.mu.Lock()
-	last, dead := s.lastMoveAt, s.dead
+	last, dead := s.lastMoveAt, s.dead || s.down // a session that is down for a trip has nothing to keep alive
 	s.mu.Unlock()
 	if dead {
 		return
@@ -515,6 +582,7 @@ func (s *session) shutdown(ctx context.Context) error {
 	queued := s.queue
 	s.queue = nil
 	notActive := s.dead && s.deadReason == holds.ReasonRemoteControlNotActive
+	down := s.down
 	s.mu.Unlock()
 	for _, j := range queued {
 		j.done <- result{err: errEnded}
@@ -530,13 +598,15 @@ func (s *session) shutdown(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), closeTimeout)
 	defer cancel()
 	var errs []error
-	end := api.INTERFACE_PORTOS_REMOTE_CONTROL_END_SESSION
-	reply, err := s.svc.client.SendSync(ctx, s.endpoint, api.INTERFACE_PORTOS_REMOTE_CONTROL, end, map[string]any{})
-	if err := replyError(end, reply, err); err != nil {
-		errs = append(errs, err)
+	if !down { // a trip that gave way to this close left the session ended already
+		end := api.INTERFACE_PORTOS_REMOTE_CONTROL_END_SESSION
+		reply, err := s.svc.client.SendSync(ctx, s.endpoint, api.INTERFACE_PORTOS_REMOTE_CONTROL, end, map[string]any{})
+		if err := replyError(end, reply, err); err != nil {
+			errs = append(errs, err)
+		}
 	}
 	dock := api.INTERFACE_PORTOS_ROBOTIC_VACUUM_CLEANER_RETURN_TO_DOCK
-	reply, err = s.svc.client.SendSync(ctx, s.endpoint, api.INTERFACE_PORTOS_ROBOTIC_VACUUM_CLEANER, dock, map[string]any{})
+	reply, err := s.svc.client.SendSync(ctx, s.endpoint, api.INTERFACE_PORTOS_ROBOTIC_VACUUM_CLEANER, dock, map[string]any{})
 	if err := replyError(dock, reply, err); err != nil {
 		errs = append(errs, err)
 	}

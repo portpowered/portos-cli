@@ -49,6 +49,7 @@ func (c *HostCommand) Generate() *cobra.Command {
 			built := hostservices.New(hostservices.Options{
 				Clock:      wallClock,
 				Portos:     portos.New(c.apiClient.Messages()),
+				State:      portos.NewStateReader(c.apiClient.Endpoints()),
 				Keepalive:  keepalive.Default,
 				LoginCheck: hostservices.LoginCheck(c.tokens),
 				Camera:     &heldCameraOpener{recorder: c.recorder, configProvider: c.configProvider},

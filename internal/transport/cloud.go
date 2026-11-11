@@ -21,7 +21,9 @@ func Cloud(client apiclient.Client) Sender { return &cloudSender{client: client}
 
 type cloudResolver struct{ sender Sender }
 
-func (c cloudResolver) For(context.Context, string, string) (Sender, error) { return c.sender, nil }
+func (c cloudResolver) For(context.Context, string, string, string) (Sender, error) {
+	return c.sender, nil
+}
 
 // CloudOnly returns a Resolver that never consults a session host.
 func CloudOnly(client apiclient.Client) Resolver { return cloudResolver{sender: Cloud(client)} }

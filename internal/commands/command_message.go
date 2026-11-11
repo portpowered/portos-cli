@@ -79,7 +79,7 @@ func (c *MessageCommand) Run(ctx context.Context, params RunParams) error {
 		zap.String("version", request.Message.Header.Version),
 	)
 
-	sender, err := c.resolver.For(ctx, request.Target.Id, request.Message.Header.Namespace)
+	sender, err := c.resolver.For(ctx, request.Target.Id, request.Message.Header.Namespace, request.Message.Header.Name)
 	if err != nil {
 		return err
 	}

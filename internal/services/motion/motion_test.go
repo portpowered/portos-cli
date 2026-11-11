@@ -141,11 +141,13 @@ type rig struct {
 	client *fakeClient
 	clock  *clock.Fake
 	fatals chan fatal
+	state  *fakeState
 }
 
 func newRig(mode keepalive.Mode) *rig {
 	r := &rig{client: newFakeClient(), clock: clock.NewFake(start), fatals: make(chan fatal, 8)}
-	r.svc = motion.New(r.client, r.clock, mode, func(id string, reason holds.Reason, detail string) {
+	r.state = &fakeState{}
+	r.svc = motion.New(r.client, r.state, r.clock, mode, func(id string, reason holds.Reason, detail string) {
 		r.fatals <- fatal{id, reason, detail}
 	})
 	return r

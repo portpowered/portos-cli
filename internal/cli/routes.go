@@ -162,6 +162,7 @@ func (c Router) BuildRoot() *cobra.Command {
 	msgGroup.AddCommand(NewPath("record <endpoint-id>", c.RecordCommand.Generate()))
 	msgGroup.AddCommand(NewPath("play-audio <endpoint-id>", c.PlayAudioCliCommand.Generate()))
 	msgGroup.AddCommand(NewPath("move <endpoint-id> <instructions...>", c.MoveCliCommand.Generate()))
+	msgGroup.AddCommand(NewPath("go-to-point <endpoint-id> <x> <y>", c.MoveCliCommand.GenerateGoToPoint()))
 	msgGroup.AddCommand(NewPath("list-commands <endpoint-id>", c.ListCommandsCliCommand.Generate()))
 	root.AddCommand(msgGroup)
 

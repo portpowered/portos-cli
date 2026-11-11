@@ -2,6 +2,8 @@ package host
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
@@ -13,6 +15,7 @@ import (
 
 	"github.com/gofrs/flock"
 	"github.com/portpowered/portos-cli/internal/clock"
+	"github.com/portpowered/portos-cli/internal/config"
 )
 
 // ErrAlreadyRunning means another host holds run/host.pid for this config dir.
@@ -53,9 +56,30 @@ type Options struct {
 	OnShutdown func(ctx context.Context)
 }
 
-// SocketPath is where the host listens for the given config dir.
+// maxSocketPathBytes keeps a socket path inside the smallest platform limit
+// (104 bytes with the terminator on macOS, 108 on Linux and Windows).
+const maxSocketPathBytes = 100
+
+// socketHashBytes is how much of the config dir's hash names a fallback socket.
+const socketHashBytes = 8
+
+// SocketPath is where the host listens for the given config dir: run/host.sock
+// inside it, or, when that path is too long for a unix socket, a socket named
+// by the config dir's hash in the run dir of ~/.portos.
 func SocketPath(configDir string) string {
-	return filepath.Join(configDir, runDirName, socketFileName)
+	inside := filepath.Join(configDir, runDirName, socketFileName)
+	if len(inside) <= maxSocketPathBytes {
+		return inside
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return inside
+	}
+	if abs, err := filepath.Abs(configDir); err == nil {
+		configDir = abs
+	}
+	sum := sha256.Sum256([]byte(configDir))
+	return filepath.Join(home, config.ConfigDirName, runDirName, hex.EncodeToString(sum[:socketHashBytes])+".sock")
 }
 
 // Run takes the host lock, listens on run/host.sock and serves until ctx ends
@@ -72,11 +96,8 @@ func Run(ctx context.Context, opts Options) error {
 	}
 
 	runDir := filepath.Join(opts.ConfigDir, runDirName)
-	if err := os.MkdirAll(runDir, runDirMode); err != nil {
-		return fmt.Errorf("create %s: %w", runDir, err)
-	}
-	if err := os.Chmod(runDir, runDirMode); err != nil {
-		return fmt.Errorf("chmod %s: %w", runDir, err)
+	if err := ensureRunDir(runDir); err != nil {
+		return err
 	}
 	lock := flock.New(filepath.Join(runDir, pidFileName))
 	locked, err := lock.TryLock()
@@ -99,6 +120,9 @@ func Run(ctx context.Context, opts Options) error {
 
 	// Holding the lock means any socket file left here is stale.
 	sockPath := SocketPath(opts.ConfigDir)
+	if err := ensureRunDir(filepath.Dir(sockPath)); err != nil {
+		return err
+	}
 	if err := os.Remove(sockPath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove stale socket: %w", err)
 	}
@@ -170,4 +194,15 @@ func watchIdle(ctx context.Context, opts Options, g *gate, cancel context.Cancel
 		ticker.Stop()
 		close(done)
 	}
+}
+
+// ensureRunDir creates dir readable by its owner only.
+func ensureRunDir(dir string) error {
+	if err := os.MkdirAll(dir, runDirMode); err != nil {
+		return fmt.Errorf("create %s: %w", dir, err)
+	}
+	if err := os.Chmod(dir, runDirMode); err != nil {
+		return fmt.Errorf("chmod %s: %w", dir, err)
+	}
+	return nil
 }

@@ -522,6 +522,7 @@ const (
 	INTERFACE_PORTOS_REMOTE_CONTROL_START_SESSION                       = "start-session"
 	INTERFACE_PORTOS_REMOTE_CONTROL_STOP_SESSION                        = "stop-session"
 	INTERFACE_PORTOS_ROBOTIC_VACUUM_CLEANER_CLEAN_ROOM                  = "clean-room"
+	INTERFACE_PORTOS_ROBOTIC_VACUUM_CLEANER_GO_TO_POINT                 = "go-to-point"
 	INTERFACE_PORTOS_ROBOTIC_VACUUM_CLEANER_PAUSE                       = "pause"
 	INTERFACE_PORTOS_ROBOTIC_VACUUM_CLEANER_RETURN_TO_DOCK              = "return-to-dock"
 	INTERFACE_PORTOS_ROBOTIC_VACUUM_CLEANER_SET_CLEANING_MODE           = "set-cleaning-mode"
@@ -945,6 +946,8 @@ const (
 	INTERFACE_PORTOS_REMOTE_CONTROL_STOP_SESSION_MESSAGE_TYPE = "port1/systems/zero/capability-interfaces/remote-control/stop-session"
 
 	INTERFACE_PORTOS_ROBOTIC_VACUUM_CLEANER_CLEAN_ROOM_MESSAGE_TYPE = "port1/systems/zero/capability-interfaces/robotic-vacuum-cleaner/clean-room"
+
+	INTERFACE_PORTOS_ROBOTIC_VACUUM_CLEANER_GO_TO_POINT_MESSAGE_TYPE = "port1/systems/zero/capability-interfaces/robotic-vacuum-cleaner/go-to-point"
 
 	INTERFACE_PORTOS_ROBOTIC_VACUUM_CLEANER_PAUSE_MESSAGE_TYPE = "port1/systems/zero/capability-interfaces/robotic-vacuum-cleaner/pause"
 
@@ -3607,6 +3610,20 @@ var MessagesTypes = map[string]MessageTypeInfo{
 		Description:     "Clean one or more rooms, in the requested order. Each entry is a canonical endpoint group the robot can control through a CAN_CONTROL relationship. More than one room requires the configuration to declare supportsMultiRoomCleaning; otherwise the request is rejected with MULTI_ROOM_UNSUPPORTED.",
 		FuncName:        "RoboticVacuumCleanerInterfaceCleanRoom",
 		PayloadTypeName: "RoboticVacuumCleanerInterfaceCleanRoomMessage",
+		NamespaceConst:  "INTERFACE_PORTOS_ROBOTIC_VACUUM_CLEANER",
+	},
+
+	"port1/systems/zero/capability-interfaces/robotic-vacuum-cleaner/go-to-point": {
+		ConstName:       "INTERFACE_PORTOS_ROBOTIC_VACUUM_CLEANER_GO_TO_POINT",
+		Namespace:       "port1/systems/zero/capability-interfaces/robotic-vacuum-cleaner",
+		Name:            "go-to-point",
+		Version:         "1.0",
+		Type:            "message",
+		Directionality:  "in",
+		Title:           "",
+		Description:     "Drive the robot to a map point by its own path planning, without cleaning. The request returns once the robot has started travelling; read arrival from the operational state, which reads GOING_TO_POINT while travelling and leaves it when the robot stops at the point. The point is a GeoJSON Point whose coordinates are [x, y] in metres, x to the right and y up. The robot stays at the point and does not return to the dock. The robot must not be under remote control: end the remote-control session first. The point must lie inside the map and in the frame the robot's pose reports.",
+		FuncName:        "RoboticVacuumCleanerInterfaceGoToPoint",
+		PayloadTypeName: "RoboticVacuumCleanerInterfaceGoToPointMessage",
 		NamespaceConst:  "INTERFACE_PORTOS_ROBOTIC_VACUUM_CLEANER",
 	},
 
@@ -7485,6 +7502,23 @@ func NewRoboticVacuumCleanerInterfaceCleanRoomMessage(payload RoboticVacuumClean
 		Header: &MessageHeader{
 			Namespace: INTERFACE_PORTOS_ROBOTIC_VACUUM_CLEANER,
 			Name:      INTERFACE_PORTOS_ROBOTIC_VACUUM_CLEANER_CLEAN_ROOM,
+			Version:   "1.0",
+		},
+		Body: body,
+	}
+}
+
+// NewRoboticVacuumCleanerInterfaceGoToPointMessage creates a new go-to-point message
+func NewRoboticVacuumCleanerInterfaceGoToPointMessage(payload RoboticVacuumCleanerInterfaceGoToPointMessage) Message {
+	messageType := INTERFACE_PORTOS_ROBOTIC_VACUUM_CLEANER_GO_TO_POINT_MESSAGE_TYPE
+	bodyData, _ := json.Marshal(payload)
+	var body map[string]interface{}
+	json.Unmarshal(bodyData, &body)
+	return Message{
+		Type: &messageType,
+		Header: &MessageHeader{
+			Namespace: INTERFACE_PORTOS_ROBOTIC_VACUUM_CLEANER,
+			Name:      INTERFACE_PORTOS_ROBOTIC_VACUUM_CLEANER_GO_TO_POINT,
 			Version:   "1.0",
 		},
 		Body: body,

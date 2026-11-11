@@ -1444,6 +1444,7 @@ const (
 	OperationalStateDockMaintenance OperationalState = "DOCK_MAINTENANCE"
 	OperationalStateDocked          OperationalState = "DOCKED"
 	OperationalStateError           OperationalState = "ERROR"
+	OperationalStateGoingToPoint    OperationalState = "GOING_TO_POINT"
 	OperationalStatePaused          OperationalState = "PAUSED"
 	OperationalStateReturningToDock OperationalState = "RETURNING_TO_DOCK"
 	OperationalStateRunning         OperationalState = "RUNNING"
@@ -4537,7 +4538,7 @@ type CooktopInterfaceConfiguration = map[string]interface{}
 
 // CooktopInterfaceOperationalStateAttribute The current operational state of the cooktop.
 type CooktopInterfaceOperationalStateAttribute struct {
-	// Value Operational state of a device. RETURNING_TO_DOCK means a robot is driving back to its dock; CHARGING means it is on the dock drawing charge; DOCKED means it is on the dock and not charging (reported only on dock evidence, never for a robot that is merely idle); DOCK_MAINTENANCE means it is on the dock while the dock services it (emptying the dust bin, washing or drying the mop), and it does not start cleaning until that finishes.
+	// Value Operational state of a device. RETURNING_TO_DOCK means a robot is driving back to its dock; CHARGING means it is on the dock drawing charge; DOCKED means it is on the dock and not charging (reported only on dock evidence, never for a robot that is merely idle); DOCK_MAINTENANCE means it is on the dock while the dock services it (emptying the dust bin, washing or drying the mop), and it does not start cleaning until that finishes; GOING_TO_POINT means a robot is driving to a requested map point by its own path planning, without cleaning.
 	Value OperationalState `json:"value"`
 }
 
@@ -4756,7 +4757,7 @@ type DishwasherInterfaceConfiguration = map[string]interface{}
 
 // DishwasherInterfaceOperationalStateAttribute The current operational state of the dishwasher.
 type DishwasherInterfaceOperationalStateAttribute struct {
-	// Value Operational state of a device. RETURNING_TO_DOCK means a robot is driving back to its dock; CHARGING means it is on the dock drawing charge; DOCKED means it is on the dock and not charging (reported only on dock evidence, never for a robot that is merely idle); DOCK_MAINTENANCE means it is on the dock while the dock services it (emptying the dust bin, washing or drying the mop), and it does not start cleaning until that finishes.
+	// Value Operational state of a device. RETURNING_TO_DOCK means a robot is driving back to its dock; CHARGING means it is on the dock drawing charge; DOCKED means it is on the dock and not charging (reported only on dock evidence, never for a robot that is merely idle); DOCK_MAINTENANCE means it is on the dock while the dock services it (emptying the dust bin, washing or drying the mop), and it does not start cleaning until that finishes; GOING_TO_POINT means a robot is driving to a requested map point by its own path planning, without cleaning.
 	Value OperationalState `json:"value"`
 }
 
@@ -7815,7 +7816,7 @@ type LaundryDryerInterfaceConfiguration = map[string]interface{}
 
 // LaundryDryerInterfaceOperationalStateAttribute The current operational state of the dryer.
 type LaundryDryerInterfaceOperationalStateAttribute struct {
-	// Value Operational state of a device. RETURNING_TO_DOCK means a robot is driving back to its dock; CHARGING means it is on the dock drawing charge; DOCKED means it is on the dock and not charging (reported only on dock evidence, never for a robot that is merely idle); DOCK_MAINTENANCE means it is on the dock while the dock services it (emptying the dust bin, washing or drying the mop), and it does not start cleaning until that finishes.
+	// Value Operational state of a device. RETURNING_TO_DOCK means a robot is driving back to its dock; CHARGING means it is on the dock drawing charge; DOCKED means it is on the dock and not charging (reported only on dock evidence, never for a robot that is merely idle); DOCK_MAINTENANCE means it is on the dock while the dock services it (emptying the dust bin, washing or drying the mop), and it does not start cleaning until that finishes; GOING_TO_POINT means a robot is driving to a requested map point by its own path planning, without cleaning.
 	Value OperationalState `json:"value"`
 }
 
@@ -7824,7 +7825,7 @@ type LaundryWasherInterfaceConfiguration = map[string]interface{}
 
 // LaundryWasherInterfaceOperationalStateAttribute The current operational state of the washer.
 type LaundryWasherInterfaceOperationalStateAttribute struct {
-	// Value Operational state of a device. RETURNING_TO_DOCK means a robot is driving back to its dock; CHARGING means it is on the dock drawing charge; DOCKED means it is on the dock and not charging (reported only on dock evidence, never for a robot that is merely idle); DOCK_MAINTENANCE means it is on the dock while the dock services it (emptying the dust bin, washing or drying the mop), and it does not start cleaning until that finishes.
+	// Value Operational state of a device. RETURNING_TO_DOCK means a robot is driving back to its dock; CHARGING means it is on the dock drawing charge; DOCKED means it is on the dock and not charging (reported only on dock evidence, never for a robot that is merely idle); DOCK_MAINTENANCE means it is on the dock while the dock services it (emptying the dust bin, washing or drying the mop), and it does not start cleaning until that finishes; GOING_TO_POINT means a robot is driving to a requested map point by its own path planning, without cleaning.
 	Value OperationalState `json:"value"`
 }
 
@@ -9502,7 +9503,7 @@ type MicrowaveOvenInterfaceConfiguration = map[string]interface{}
 
 // MicrowaveOvenInterfaceOperationalStateAttribute The current operational state of the microwave oven.
 type MicrowaveOvenInterfaceOperationalStateAttribute struct {
-	// Value Operational state of a device. RETURNING_TO_DOCK means a robot is driving back to its dock; CHARGING means it is on the dock drawing charge; DOCKED means it is on the dock and not charging (reported only on dock evidence, never for a robot that is merely idle); DOCK_MAINTENANCE means it is on the dock while the dock services it (emptying the dust bin, washing or drying the mop), and it does not start cleaning until that finishes.
+	// Value Operational state of a device. RETURNING_TO_DOCK means a robot is driving back to its dock; CHARGING means it is on the dock drawing charge; DOCKED means it is on the dock and not charging (reported only on dock evidence, never for a robot that is merely idle); DOCK_MAINTENANCE means it is on the dock while the dock services it (emptying the dust bin, washing or drying the mop), and it does not start cleaning until that finishes; GOING_TO_POINT means a robot is driving to a requested map point by its own path planning, without cleaning.
 	Value OperationalState `json:"value"`
 }
 
@@ -10301,7 +10302,7 @@ type OauthTokenSecret struct {
 	Type string `json:"type"`
 }
 
-// OperationalState Operational state of a device. RETURNING_TO_DOCK means a robot is driving back to its dock; CHARGING means it is on the dock drawing charge; DOCKED means it is on the dock and not charging (reported only on dock evidence, never for a robot that is merely idle); DOCK_MAINTENANCE means it is on the dock while the dock services it (emptying the dust bin, washing or drying the mop), and it does not start cleaning until that finishes.
+// OperationalState Operational state of a device. RETURNING_TO_DOCK means a robot is driving back to its dock; CHARGING means it is on the dock drawing charge; DOCKED means it is on the dock and not charging (reported only on dock evidence, never for a robot that is merely idle); DOCK_MAINTENANCE means it is on the dock while the dock services it (emptying the dust bin, washing or drying the mop), and it does not start cleaning until that finishes; GOING_TO_POINT means a robot is driving to a requested map point by its own path planning, without cleaning.
 type OperationalState string
 
 // OvenInterfaceConfiguration defines model for OvenInterfaceConfiguration.
@@ -10314,7 +10315,7 @@ type OvenInterfaceModeAttribute struct {
 
 // OvenInterfaceOperationalStateAttribute The current operational state of the oven.
 type OvenInterfaceOperationalStateAttribute struct {
-	// Value Operational state of a device. RETURNING_TO_DOCK means a robot is driving back to its dock; CHARGING means it is on the dock drawing charge; DOCKED means it is on the dock and not charging (reported only on dock evidence, never for a robot that is merely idle); DOCK_MAINTENANCE means it is on the dock while the dock services it (emptying the dust bin, washing or drying the mop), and it does not start cleaning until that finishes.
+	// Value Operational state of a device. RETURNING_TO_DOCK means a robot is driving back to its dock; CHARGING means it is on the dock drawing charge; DOCKED means it is on the dock and not charging (reported only on dock evidence, never for a robot that is merely idle); DOCK_MAINTENANCE means it is on the dock while the dock services it (emptying the dust bin, washing or drying the mop), and it does not start cleaning until that finishes; GOING_TO_POINT means a robot is driving to a requested map point by its own path planning, without cleaning.
 	Value OperationalState `json:"value"`
 }
 
@@ -11347,7 +11348,7 @@ type PumpConfigurationAndControlInterfacePumpModeAttributeValue string
 
 // PumpConfigurationAndControlInterfacePumpStatusAttribute The current status of the pump.
 type PumpConfigurationAndControlInterfacePumpStatusAttribute struct {
-	// Value Operational state of a device. RETURNING_TO_DOCK means a robot is driving back to its dock; CHARGING means it is on the dock drawing charge; DOCKED means it is on the dock and not charging (reported only on dock evidence, never for a robot that is merely idle); DOCK_MAINTENANCE means it is on the dock while the dock services it (emptying the dust bin, washing or drying the mop), and it does not start cleaning until that finishes.
+	// Value Operational state of a device. RETURNING_TO_DOCK means a robot is driving back to its dock; CHARGING means it is on the dock drawing charge; DOCKED means it is on the dock and not charging (reported only on dock evidence, never for a robot that is merely idle); DOCK_MAINTENANCE means it is on the dock while the dock services it (emptying the dust bin, washing or drying the mop), and it does not start cleaning until that finishes; GOING_TO_POINT means a robot is driving to a requested map point by its own path planning, without cleaning.
 	Value OperationalState `json:"value"`
 }
 
@@ -12193,6 +12194,30 @@ type RoboticVacuumCleanerInterfaceConfiguration struct {
 	SupportsScheduling *bool `json:"supportsScheduling,omitempty"`
 }
 
+// RoboticVacuumCleanerInterfaceGoToPointMessage Drive the robot to a map point by its own path planning, without cleaning. The request returns once the robot has started travelling; read arrival from the operational state, which reads GOING_TO_POINT while travelling and leaves it when the robot stops at the point. The point is a GeoJSON Point whose coordinates are [x, y] in metres, x to the right and y up. The robot stays at the point and does not return to the dock. The robot must not be under remote control: end the remote-control session first. The point must lie inside the map and in the frame the robot's pose reports.
+type RoboticVacuumCleanerInterfaceGoToPointMessage struct {
+	// Point GeoJSON-like point
+	Point SpatialPoint `json:"point"`
+
+	// RelativeToGroupRouteId Provider group route whose frame the point uses: the same relativeToGroupRouteId value the robot's spatial pose reports (for example <duid>/map:0). A different frame is rejected
+	RelativeToGroupRouteId string `json:"relativeToGroupRouteId"`
+}
+
+// RoboticVacuumCleanerInterfaceGoToPointMessageEnvelope The `go-to-point` message (version 1.0) of the `port1/systems/zero/capability-interfaces/robotic-vacuum-cleaner` capability interface, as sent to an endpoint. The header identifies the message and selects the body schema.
+type RoboticVacuumCleanerInterfaceGoToPointMessageEnvelope struct {
+	// Body Drive the robot to a map point by its own path planning, without cleaning. The request returns once the robot has started travelling; read arrival from the operational state, which reads GOING_TO_POINT while travelling and leaves it when the robot stops at the point. The point is a GeoJSON Point whose coordinates are [x, y] in metres, x to the right and y up. The robot stays at the point and does not return to the dock. The robot must not be under remote control: end the remote-control session first. The point must lie inside the map and in the frame the robot's pose reports.
+	Body RoboticVacuumCleanerInterfaceGoToPointMessage `json:"body"`
+
+	// CorrelationToken Token used for correlating related messages
+	CorrelationToken *string `json:"correlationToken,omitempty"`
+
+	// Header Identifies this capability message.
+	Header RoboticVacuumCleanerInterfaceGoToPointMessageHeader `json:"header"`
+}
+
+// RoboticVacuumCleanerInterfaceGoToPointMessageHeader Identifies this capability message.
+type RoboticVacuumCleanerInterfaceGoToPointMessageHeader = MessageHeader
+
 // RoboticVacuumCleanerInterfaceOperationalStateAttribute The vacuum's current operational state, such as cleaning, docked or returning to its dock. While the robot is under remote control it may report no operational state; read remote-control/session instead.
 type RoboticVacuumCleanerInterfaceOperationalStateAttribute struct {
 	// ErrorReason Plain-language reason the vacuum reports while value is ERROR, for example Robot trapped or Main brush jammed. Omitted when the vacuum reports no error or the device gives no reason. Show it to the customer; the vacuum usually needs a person to clear the cause before it can dock or clean.
@@ -12201,7 +12226,7 @@ type RoboticVacuumCleanerInterfaceOperationalStateAttribute struct {
 	// ProviderErrorCode The vendor's numeric error code behind errorReason, present whenever the vacuum reports a nonzero error code, including codes without a Port OS wording.
 	ProviderErrorCode *int `json:"providerErrorCode,omitempty"`
 
-	// Value Operational state of a device. RETURNING_TO_DOCK means a robot is driving back to its dock; CHARGING means it is on the dock drawing charge; DOCKED means it is on the dock and not charging (reported only on dock evidence, never for a robot that is merely idle); DOCK_MAINTENANCE means it is on the dock while the dock services it (emptying the dust bin, washing or drying the mop), and it does not start cleaning until that finishes.
+	// Value Operational state of a device. RETURNING_TO_DOCK means a robot is driving back to its dock; CHARGING means it is on the dock drawing charge; DOCKED means it is on the dock and not charging (reported only on dock evidence, never for a robot that is merely idle); DOCK_MAINTENANCE means it is on the dock while the dock services it (emptying the dust bin, washing or drying the mop), and it does not start cleaning until that finishes; GOING_TO_POINT means a robot is driving to a requested map point by its own path planning, without cleaning.
 	Value OperationalState `json:"value"`
 }
 

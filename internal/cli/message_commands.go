@@ -1,9 +1,12 @@
 package cli
 
 import (
+	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/portpowered/portos-cli/internal/commands"
+	"github.com/portpowered/portos-cli/internal/exitcode"
 	"github.com/spf13/cobra"
 )
 
@@ -58,6 +61,46 @@ Separate multiple instructions with commas.`,
 			return c.command.Run(cmd.Context(), params)
 		},
 	}
+	return command
+}
+
+// GenerateGoToPoint returns the cobra command for go-to-point, which shares the
+// move command's implementation.
+func (c *MoveCliCommand) GenerateGoToPoint() *cobra.Command {
+	var frame string
+	command := &cobra.Command{
+		Short: "Send a robot vacuum to a map point by its own path planning",
+		Long: `Send a robot vacuum to a point on its map, in metres, without cleaning.
+
+Under a motion hold (pass the lease with --lease or PORTOS_LEASE) this is one
+operation: the host ends the remote-control session, sends go-to-point, waits
+for the robot to arrive, starts the session again so the hold is live for the
+last metre, and prints the arrival pose. The robot stops near the point, not
+always on it. The frame is the relativeToGroupRouteId the robot's pose reports;
+under a hold it may be left out.
+
+Without a hold the message goes to Port OS as is. It replies once the robot has
+started travelling, the robot must not be under remote control, and --frame is
+required.`,
+		Example: `  # Cross the room under a hold, then print the arrival pose as JSON
+  port msg go-to-point ep/0abc 1.5 0 --lease "$PORTOS_LEASE" --json
+
+  # Name the frame explicitly; put -- before a negative coordinate
+  port msg go-to-point ep/0abc --frame 12345/map:0 --lease "$PORTOS_LEASE" -- -2 3.25`,
+		Args: cobra.ExactArgs(3),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			x, err := strconv.ParseFloat(args[1], 64)
+			if err != nil {
+				return exitcode.NewInvalidArgument(fmt.Errorf("x %q is not a number of metres", args[1]))
+			}
+			y, err := strconv.ParseFloat(args[2], 64)
+			if err != nil {
+				return exitcode.NewInvalidArgument(fmt.Errorf("y %q is not a number of metres", args[2]))
+			}
+			return c.command.GoToPoint(cmd.Context(), commands.GoToPointParams{EndpointID: args[0], X: x, Y: y, Frame: frame})
+		},
+	}
+	command.Flags().StringVar(&frame, "frame", "", "relativeToGroupRouteId of the frame the point uses (required without a hold)")
 	return command
 }
 

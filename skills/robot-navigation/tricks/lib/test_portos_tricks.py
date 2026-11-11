@@ -6,7 +6,8 @@ import math
 import unittest
 
 from portos_tricks import (
-    Bounds, NotArrived, NotCarriedOut, HoldProblem, Pose, Robot, angle_diff, bearing, drive_plan, turn_plan,
+    Bounds, NotArrived, NotCarriedOut, HoldProblem, Port, Pose, Robot, RobotError, angle_diff, bearing, drive_plan,
+    turn_plan,
 )
 
 
@@ -50,6 +51,9 @@ class FakePort:
         self.wall_x = wall_x
         self.env = {}
         self.calls = []
+        self.trips = []
+        self.trip_error = None
+        self.trip_pose = True  # False: the arrival reply carries no pose
 
     def _pose(self):
         return {"point": {"type": "Point", "coordinates": [self.x, self.y]}, "heading": self.heading,
@@ -78,6 +82,16 @@ class FakePort:
                 raise NotCarriedOut(10, "the robot did not move as asked")
             return {"results": [{"message": {"body": {"pose": self._pose(), "distanceMetres": moved,
                                                        "turnedDegrees": turned}}}]}
+        if args[:2] == ["message", "go-to-point"]:
+            self.trips.append(list(args))
+            if self.trip_error is not None:
+                raise self.trip_error
+            tx, ty = (float(v) for v in args[args.index("--") + 1:])
+            self.x, self.y = tx, ty
+            body = {"operationalState": "STOPPED"}
+            if self.trip_pose:
+                body["pose"] = self._pose()
+            return {"results": [{"message": {"body": body}}]}
         if args[:2] == ["group", "list"]:
             pages = self.group_pages()
             return pages[1] if "--next-token" in args else pages[0]
@@ -156,6 +170,65 @@ class Correction(unittest.TestCase):
         robot.pose()
         with self.assertRaises(NotArrived):
             robot.drive_to(5.0, 0.0, max_moves=2)
+
+
+class GoingTo(unittest.TestCase):
+    def robot(self, port):
+        return Robot("vacuum", port=port, log=io.StringIO())
+
+    def test_go_to_returns_the_arrival_pose_and_remembers_it(self):
+        port = FakePort()
+        robot = self.robot(port)
+        pose = robot.go_to(1.5, -2.0)
+        self.assertEqual((pose.x, pose.y), (1.5, -2.0))
+        self.assertEqual(robot.where(), pose)
+        self.assertEqual(robot.trail[-1], (1.5, -2.0))
+
+    def test_go_to_reads_the_pose_when_the_reply_has_none(self):
+        port = FakePort()
+        port.trip_pose = False
+        robot = self.robot(port)
+        pose = robot.go_to(1.5, -2.0)
+        self.assertEqual((pose.x, pose.y), (1.5, -2.0))
+        self.assertEqual(port.calls[-1][:2], ["endpoint", "attribute"])
+
+    def test_go_to_passes_negative_numbers_after_a_terminator(self):
+        port = FakePort()
+        self.robot(port).go_to(-2, 3.25, frame="sim/floor")
+        self.assertEqual(port.trips[0], ["message", "go-to-point", "vacuum", "--frame", "sim/floor", "--", "-2.0", "3.25"])
+
+    def test_go_to_leaves_the_frame_to_the_host_by_default(self):
+        port = FakePort()
+        self.robot(port).go_to(1, 1)
+        self.assertNotIn("--frame", port.trips[0])
+
+    def test_a_failed_trip_raises_with_the_pose_where_the_robot_is(self):
+        port = FakePort(x=0.5, y=0.5)
+        port.trip_error = NotCarriedOut(10, "the robot was still travelling after 3m0s; it was told to stop")
+        robot = self.robot(port)
+        with self.assertRaises(NotCarriedOut) as failed:
+            robot.go_to(4, 4)
+        self.assertEqual((failed.exception.pose.x, failed.exception.pose.y), (0.5, 0.5))
+
+    def test_a_refusal_is_a_plain_error_with_its_reason(self):
+        port = FakePort()
+        port.trip_error = RobotError(1, "the point (40.00, 0.00) is outside the map")
+        with self.assertRaises(RobotError) as refused:
+            self.robot(port).go_to(40, 0)
+        self.assertIn("outside the map", refused.exception.detail)
+
+    def test_json_goes_before_a_terminator(self):
+        recorded = []
+
+        class Capture(Port):
+            def run(self, args):
+                recorded.append(list(args))
+                return 0, "{}", ""
+
+        Capture().json(["message", "go-to-point", "vacuum", "--", "-1.0", "2.0"])
+        self.assertEqual(recorded[0], ["message", "go-to-point", "vacuum", "--json", "--", "-1.0", "2.0"])
+        Capture().json(["session", "release", "h1"])
+        self.assertEqual(recorded[1], ["session", "release", "h1", "--json"])
 
 
 class Holding(unittest.TestCase):

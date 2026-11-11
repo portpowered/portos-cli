@@ -19,10 +19,12 @@ type fakeAuth struct {
 	err             error
 	lease, endpoint string
 	kind            holds.Kind
+	calls           int
 }
 
 func (f *fakeAuth) Authorize(lease, endpointID string, kind holds.Kind) (holds.Hold, error) {
 	f.lease, f.endpoint, f.kind = lease, endpointID, kind
+	f.calls++
 	if f.err != nil {
 		return holds.Hold{}, f.err
 	}
@@ -34,6 +36,15 @@ type fakeMover struct {
 	holdID string
 	body   map[string]any
 	reply  *api.MessageRequest
+	// tripped records a GoToPoint, and tripErr is what it returns.
+	tripped bool
+	tripErr error
+}
+
+func (f *fakeMover) GoToPoint(_ context.Context, holdID string, body map[string]any) (*api.MessageRequest, error) {
+	f.tripped = true
+	f.holdID, f.body = holdID, body
+	return f.reply, f.tripErr
 }
 
 func (f *fakeMover) Move(_ context.Context, holdID string, body map[string]any) (*api.MessageRequest, error) {
@@ -248,4 +259,59 @@ func TestDispatchRefusesCameraSessionMessagesUnderAHold(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, holds.CodeHoldOwnsSession, exitcode.ProviderCode(reply))
 	require.Equal(t, exitcode.ExitHold, exitcode.Code(&apiclient.MessageRequestFailed{Request: reply}))
+}
+
+func goToPointRequest() *api.CreateMessageRequest {
+	req := request("go-to-point")
+	req.Message.Header.Namespace = api.INTERFACE_PORTOS_ROBOTIC_VACUUM_CLEANER
+	req.Message.Body = map[string]any{"relativeToGroupRouteId": "sim/floor"}
+	return req
+}
+
+func TestDispatchRoutesGoToPointToTheMotionSession(t *testing.T) {
+	auth := &fakeAuth{}
+	want := &api.MessageRequest{Id: "arrived", Status: api.SUCCEEDED}
+	mover := &fakeMover{reply: want}
+	reply, err := newService(auth, mover).Dispatch(t.Context(), "the-lease", goToPointRequest())
+	require.NoError(t, err)
+	require.Same(t, want, reply)
+	require.True(t, mover.tripped)
+	require.Equal(t, "hold-1", mover.holdID)
+	require.Equal(t, "sim/floor", mover.body["relativeToGroupRouteId"])
+	require.Equal(t, holds.KindMotion, auth.kind)
+	require.Equal(t, 2, auth.calls, "the trip is activity: the lease is stamped again when it ends")
+}
+
+func TestDispatchGoToPointPassesPortOSRefusalThrough(t *testing.T) {
+	refusal := &api.MessageRequest{Id: "refused", Status: api.FAILED}
+	reply, err := newService(&fakeAuth{}, &fakeMover{reply: refusal}).Dispatch(t.Context(), "the-lease", goToPointRequest())
+	require.NoError(t, err)
+	require.Same(t, refusal, reply)
+}
+
+func TestDispatchGoToPointTripFailureIsATypedRefusal(t *testing.T) {
+	mover := &fakeMover{tripErr: &holds.Error{Code: "go_to_point_timeout", Message: "still travelling"}}
+	reply, err := newService(&fakeAuth{}, mover).Dispatch(t.Context(), "the-lease", goToPointRequest())
+	require.NoError(t, err)
+	require.Equal(t, api.FAILED, reply.Status)
+	require.Equal(t, "go_to_point_timeout", exitcode.ProviderCode(reply))
+	require.Equal(t, exitcode.ExitNotCarriedOut, exitcode.Code(&apiclient.MessageRequestFailed{Request: reply}))
+}
+
+func TestDispatchGoToPointNeedsTheLease(t *testing.T) {
+	mover := &fakeMover{}
+	reply, err := newService(&fakeAuth{err: &holds.Error{Code: holds.CodeHoldLeaseRequired, Message: "lease"}}, mover).Dispatch(t.Context(), "", goToPointRequest())
+	require.NoError(t, err)
+	require.Equal(t, holds.CodeHoldLeaseRequired, exitcode.ProviderCode(reply))
+	require.False(t, mover.tripped)
+}
+
+func TestDispatchOtherVacuumMessagesAreNotServed(t *testing.T) {
+	req := goToPointRequest()
+	req.Message.Header.Name = "return-to-dock"
+	mover := &fakeMover{}
+	reply, err := newService(&fakeAuth{}, mover).Dispatch(t.Context(), "the-lease", req)
+	require.NoError(t, err)
+	require.Equal(t, holds.CodeNotServedByHold, exitcode.ProviderCode(reply))
+	require.False(t, mover.tripped)
 }

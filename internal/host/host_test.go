@@ -18,7 +18,7 @@ import (
 func waitForSocket(t *testing.T, dir string) {
 	t.Helper()
 	require.Eventually(t, func() bool {
-		conn, err := net.Dial("unix", filepath.Join(dir, "run", "host.sock"))
+		conn, err := net.Dial("unix", SocketPath(dir))
 		if err != nil {
 			return false
 		}

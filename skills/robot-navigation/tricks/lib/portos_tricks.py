@@ -190,8 +190,12 @@ class Port:
         return done.returncode, done.stdout, done.stderr
 
     def json(self, args: Sequence[str]) -> dict:
-        """Runs a command with --json and returns its output, raising the typed error on failure."""
-        code, out, err = self.run(list(args) + ["--json"])
+        """Runs a command with --json and returns its output, raising the typed error on failure.
+        --json goes before a `--` terminator when the arguments have one (negative numbers need it)."""
+        args = list(args)
+        at = args.index("--") if "--" in args else len(args)
+        args.insert(at, "--json")
+        code, out, err = self.run(args)
         if code != 0:
             raise _error(code, out, err)
         return json.loads(out) if out.strip() else {}
@@ -379,6 +383,29 @@ class Robot:
         if math.hypot(x - here.x, y - here.y) <= max(tolerance, MIN_DRIVE_METRES):
             return here
         raise NotArrived((x, y), here)
+
+    def go_to(self, x: float, y: float, frame: str = "") -> Pose:
+        """Sends the robot to (x, y) metres by its own path planning and returns the arrival pose.
+
+        One call: the host ends the remote-control session, the robot plans and drives its own
+        route (it does not clean), the host waits for it to stop and starts the session again, so
+        the hold is live for the last metre. The robot stops within a few centimetres of the point,
+        not always on it; finish with drive_to or turn_to. frame is the pose's relativeToGroupRouteId
+        (the robot's own when empty). A trip that fails or takes over 180 seconds raises NotCarriedOut
+        (the robot is told to stop; .pose is where it is), and a refusal (a point off the map, another
+        frame) raises RobotError with the reason."""
+        args = ["message", "go-to-point", self.endpoint] + (["--frame", frame] if frame else [])
+        args += ["--", repr(float(x)), repr(float(y))]
+        try:
+            out = self.port.json(args)
+        except NotCarriedOut as failure:
+            failure.pose = self.pose()
+            raise
+        reply = _move_body(out)
+        self.replies.append(reply)
+        if not reply.get("pose"):
+            return self.pose()  # the robot gave no arrival pose; read it now that the session is back
+        return self._seen(Pose.from_attribute(reply["pose"]))
 
     # Looking.
 

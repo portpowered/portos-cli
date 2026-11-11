@@ -66,7 +66,7 @@ func (c *SnapshotCommand) Run(ctx context.Context, params SnapshotParams) error 
 		return fmt.Errorf("endpoint ID is required")
 	}
 
-	sender, err := c.resolver.For(ctx, params.EndpointID, api.INTERFACE_PORTOS_SNAPSHOT)
+	sender, err := c.resolver.For(ctx, params.EndpointID, api.INTERFACE_PORTOS_SNAPSHOT, api.INTERFACE_PORTOS_SNAPSHOT_GET_SNAPSHOT)
 	if err != nil {
 		return err
 	}

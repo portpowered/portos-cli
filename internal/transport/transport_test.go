@@ -76,7 +76,7 @@ func TestResolverNoHostUsesCloud(t *testing.T) {
 		cloud:     &cloudSender{client: &fakeClient{messages: &fakeMessages{}}},
 		dial:      dialHost,
 	}
-	sender, err := r.For(t.Context(), "ep/1", api.INTERFACE_PORTOS_REMOTE_CONTROL)
+	sender, err := r.For(t.Context(), "ep/1", api.INTERFACE_PORTOS_REMOTE_CONTROL, "")
 	require.NoError(t, err)
 	require.False(t, Held(sender))
 	_, statErr := os.Stat(filepath.Join(dir, "run"))
@@ -86,7 +86,7 @@ func TestResolverNoHostUsesCloud(t *testing.T) {
 func TestResolverHeldEndpointUsesHost(t *testing.T) {
 	host := &fakeHost{holds: []hostclient.Hold{{ID: "hold-1", EndpointID: "ep/1", Kinds: []string{"motion"}, State: "live"}}}
 	r, messages := newResolver("d", host, nil, "the-lease")
-	sender, err := r.For(t.Context(), "ep/1", api.INTERFACE_PORTOS_REMOTE_CONTROL)
+	sender, err := r.For(t.Context(), "ep/1", api.INTERFACE_PORTOS_REMOTE_CONTROL, "")
 	require.NoError(t, err)
 	require.True(t, Held(sender))
 	_, err = sender.Send(t.Context(), req(), "key")
@@ -99,7 +99,7 @@ func TestResolverHeldEndpointUsesHost(t *testing.T) {
 func TestResolverHeldEndpointWithoutLeaseStillUsesHost(t *testing.T) {
 	host := &fakeHost{holds: []hostclient.Hold{{ID: "hold-1", EndpointID: "ep/1", Kinds: []string{"motion"}, State: "live"}}}
 	r, _ := newResolver("d", host, nil, "")
-	sender, err := r.For(t.Context(), "ep/1", api.INTERFACE_PORTOS_REMOTE_CONTROL)
+	sender, err := r.For(t.Context(), "ep/1", api.INTERFACE_PORTOS_REMOTE_CONTROL, "")
 	require.NoError(t, err)
 	require.True(t, Held(sender))
 }
@@ -107,12 +107,48 @@ func TestResolverHeldEndpointWithoutLeaseStillUsesHost(t *testing.T) {
 func TestResolverOtherCapabilityUsesCloud(t *testing.T) {
 	host := &fakeHost{holds: []hostclient.Hold{{ID: "hold-1", EndpointID: "ep/1", Kinds: []string{"motion"}, State: "live"}}}
 	r, messages := newResolver("d", host, nil, "the-lease")
-	sender, err := r.For(t.Context(), "ep/1", api.INTERFACE_PORTOS_POWER)
+	sender, err := r.For(t.Context(), "ep/1", api.INTERFACE_PORTOS_POWER, "")
 	require.NoError(t, err)
 	require.False(t, Held(sender))
 	_, err = sender.Send(t.Context(), req(), "key")
 	require.NoError(t, err)
 	require.Equal(t, 1, messages.sent)
+}
+
+func TestResolverGoToPointUsesTheMotionHold(t *testing.T) {
+	vac := api.INTERFACE_PORTOS_ROBOTIC_VACUUM_CLEANER
+	goTo := api.INTERFACE_PORTOS_ROBOTIC_VACUUM_CLEANER_GO_TO_POINT
+	host := &fakeHost{holds: []hostclient.Hold{{ID: "hold-1", EndpointID: "ep/1", Kinds: []string{"motion"}, State: "live"}}}
+	r, messages := newResolver("d", host, nil, "the-lease")
+	sender, err := r.For(t.Context(), "ep/1", vac, goTo)
+	require.NoError(t, err)
+	require.True(t, Held(sender), "go-to-point goes to the hold")
+
+	// The rest of the vacuum's messages take the cloud path, lease or not.
+	sender, err = r.For(t.Context(), "ep/1", vac, "return-to-dock")
+	require.NoError(t, err)
+	require.False(t, Held(sender))
+	_, err = sender.Send(t.Context(), req(), "key")
+	require.NoError(t, err)
+	require.Equal(t, 1, messages.sent)
+
+	// A camera-only hold does not cover go-to-point.
+	cameraOnly := &fakeHost{holds: []hostclient.Hold{{ID: "hold-2", EndpointID: "ep/1", Kinds: []string{"camera"}, State: "live"}}}
+	r, _ = newResolver("d", cameraOnly, nil, "")
+	sender, err = r.For(t.Context(), "ep/1", vac, goTo)
+	require.NoError(t, err)
+	require.False(t, Held(sender))
+}
+
+func TestResolverGoToPointWithALeaseAndNoHoldIsRefused(t *testing.T) {
+	r, messages := newResolver("d", &fakeHost{}, nil, "the-lease")
+	sender, err := r.For(t.Context(), "ep/1", api.INTERFACE_PORTOS_ROBOTIC_VACUUM_CLEANER, api.INTERFACE_PORTOS_ROBOTIC_VACUUM_CLEANER_GO_TO_POINT)
+	require.NoError(t, err)
+	require.True(t, Held(sender))
+	reply, err := sender.Send(t.Context(), req(), "key")
+	require.NoError(t, err)
+	require.Equal(t, api.FAILED, reply.Status)
+	require.Zero(t, messages.sent, "a stale lease never reaches the cloud")
 }
 
 func TestResolverEndedOrOtherEndpointWithoutLeaseUsesCloud(t *testing.T) {
@@ -123,25 +159,25 @@ func TestResolverEndedOrOtherEndpointWithoutLeaseUsesCloud(t *testing.T) {
 		{ID: "hold-2", EndpointID: ep2, Kinds: []string{"motion"}, State: "live"},
 	}}
 	r, _ := newResolver("d", host, nil, "")
-	sender, err := r.For(t.Context(), ep1, api.INTERFACE_PORTOS_REMOTE_CONTROL)
+	sender, err := r.For(t.Context(), ep1, api.INTERFACE_PORTOS_REMOTE_CONTROL, "")
 	require.NoError(t, err)
 	require.False(t, Held(sender))
 }
 
 func TestResolverHostErrorIsNotCloud(t *testing.T) {
 	r, _ := newResolver("d", nil, errors.New("boom"), "")
-	_, err := r.For(t.Context(), "ep/1", api.INTERFACE_PORTOS_REMOTE_CONTROL)
+	_, err := r.For(t.Context(), "ep/1", api.INTERFACE_PORTOS_REMOTE_CONTROL, "")
 	require.Error(t, err)
 }
 
 func TestResolverAliasEndpoint(t *testing.T) {
 	host := &fakeHost{holds: []hostclient.Hold{{ID: "hold-1", EndpointID: "me/ep/I-r_4j-cTIaVkx7o8yKJHg", Kinds: []string{"motion"}, State: "live"}}}
 	r, _ := newResolver("d", host, nil, "x")
-	sender, err := r.For(t.Context(), "port1/principals/p1/endpoints/23eaffe2-3f9c-4c86-9593-1ee8f322891e", api.INTERFACE_PORTOS_REMOTE_CONTROL)
+	sender, err := r.For(t.Context(), "port1/principals/p1/endpoints/23eaffe2-3f9c-4c86-9593-1ee8f322891e", api.INTERFACE_PORTOS_REMOTE_CONTROL, "")
 	require.NoError(t, err)
 	require.True(t, Held(sender), "another spelling of the held endpoint must still go to the host")
 
-	other, err := r.For(t.Context(), "port1/principals/p1/endpoints/00000000-0000-4000-8000-000000000001", api.INTERFACE_PORTOS_REMOTE_CONTROL)
+	other, err := r.For(t.Context(), "port1/principals/p1/endpoints/00000000-0000-4000-8000-000000000001", api.INTERFACE_PORTOS_REMOTE_CONTROL, "")
 	require.NoError(t, err)
 	requireRefusal(t, other, "hold_not_found")
 }
@@ -149,11 +185,11 @@ func TestResolverAliasEndpoint(t *testing.T) {
 func TestResolverUnkeyedIDFailsSafeTowardLiveHold(t *testing.T) {
 	host := &fakeHost{holds: []hostclient.Hold{{ID: "hold-1", EndpointID: "me/ep/I-r_4j-cTIaVkx7o8yKJHg", Kinds: []string{"motion"}, State: "live"}}}
 	r, _ := newResolver("d", host, nil, "x")
-	sender, err := r.For(t.Context(), "my-vacuum", api.INTERFACE_PORTOS_REMOTE_CONTROL)
+	sender, err := r.For(t.Context(), "my-vacuum", api.INTERFACE_PORTOS_REMOTE_CONTROL, "")
 	require.NoError(t, err)
 	require.True(t, Held(sender))
 
-	other, err := r.For(t.Context(), "my-vacuum", api.INTERFACE_PORTOS_POWER)
+	other, err := r.For(t.Context(), "my-vacuum", api.INTERFACE_PORTOS_POWER, "")
 	require.NoError(t, err)
 	require.False(t, Held(other), "a capability the hold does not cover still goes to the cloud")
 }
@@ -161,7 +197,7 @@ func TestResolverUnkeyedIDFailsSafeTowardLiveHold(t *testing.T) {
 func TestResolverTransportErrorIsNotCloud(t *testing.T) {
 	host := &fakeHost{listErr: hostclient.ErrTransport}
 	r, messages := newResolver("d", host, nil, "")
-	sender, err := r.For(t.Context(), "ep/1", api.INTERFACE_PORTOS_REMOTE_CONTROL)
+	sender, err := r.For(t.Context(), "ep/1", api.INTERFACE_PORTOS_REMOTE_CONTROL, "")
 	require.ErrorIs(t, err, hostclient.ErrTransport)
 	require.Nil(t, sender)
 	require.Zero(t, messages.sent)
@@ -180,7 +216,7 @@ func TestResolverStaleLeaseOnEndedHoldRefusesHoldEnded(t *testing.T) {
 	const ep = "me/ep/I-r_4j-cTIaVkx7o8yKJHg"
 	host := &fakeHost{holds: []hostclient.Hold{{ID: "hold-1", EndpointID: ep, Kinds: []string{"motion"}, State: "ended"}}}
 	r, messages := newResolver("d", host, nil, "old-lease")
-	sender, err := r.For(t.Context(), ep, api.INTERFACE_PORTOS_REMOTE_CONTROL)
+	sender, err := r.For(t.Context(), ep, api.INTERFACE_PORTOS_REMOTE_CONTROL, "")
 	require.NoError(t, err)
 	requireRefusal(t, sender, "hold_ended")
 	require.Zero(t, messages.sent)
@@ -189,7 +225,7 @@ func TestResolverStaleLeaseOnEndedHoldRefusesHoldEnded(t *testing.T) {
 
 func TestResolverLeaseWithNoHostRefusesHoldNotFound(t *testing.T) {
 	r, messages := newResolver("d", nil, hostclient.ErrNotRunning, "old-lease")
-	sender, err := r.For(t.Context(), "ep/1", api.INTERFACE_PORTOS_REMOTE_CONTROL)
+	sender, err := r.For(t.Context(), "ep/1", api.INTERFACE_PORTOS_REMOTE_CONTROL, "")
 	require.NoError(t, err)
 	requireRefusal(t, sender, "hold_not_found")
 	require.Zero(t, messages.sent)
@@ -198,7 +234,7 @@ func TestResolverLeaseWithNoHostRefusesHoldNotFound(t *testing.T) {
 func TestResolverLeaseWithHostRouteNotServedRefusesHoldNotFound(t *testing.T) {
 	host := &fakeHost{listErr: hostclient.ErrRouteNotServed}
 	r, messages := newResolver("d", host, nil, "old-lease")
-	sender, err := r.For(t.Context(), "ep/1", api.INTERFACE_PORTOS_REMOTE_CONTROL)
+	sender, err := r.For(t.Context(), "ep/1", api.INTERFACE_PORTOS_REMOTE_CONTROL, "")
 	require.NoError(t, err)
 	requireRefusal(t, sender, "hold_not_found")
 	require.Zero(t, messages.sent)
@@ -206,7 +242,7 @@ func TestResolverLeaseWithHostRouteNotServedRefusesHoldNotFound(t *testing.T) {
 
 func TestResolverLeaseOnUncoveredNamespaceStillUsesCloud(t *testing.T) {
 	r, messages := newResolver("d", nil, hostclient.ErrNotRunning, "old-lease")
-	sender, err := r.For(t.Context(), "ep/1", api.INTERFACE_PORTOS_ROBOTIC_VACUUM_CLEANER)
+	sender, err := r.For(t.Context(), "ep/1", api.INTERFACE_PORTOS_ROBOTIC_VACUUM_CLEANER, "")
 	require.NoError(t, err)
 	require.False(t, Held(sender))
 	_, err = sender.Send(t.Context(), req(), "key")
@@ -225,7 +261,7 @@ func TestResolverRefusalsExitWithHoldCode(t *testing.T) {
 func TestRecordGoesThroughTheCameraHold(t *testing.T) {
 	host := &fakeHost{holds: []hostclient.Hold{{ID: "hold-1", EndpointID: "ep/1", Kinds: []string{"camera"}, State: "live"}}}
 	r, messages := newResolver(t.TempDir(), host, nil, "lease-1")
-	sender, err := r.For(t.Context(), "ep/1", api.INTERFACE_PORTOS_RTC_SESSION)
+	sender, err := r.For(t.Context(), "ep/1", api.INTERFACE_PORTOS_RTC_SESSION, "")
 	require.NoError(t, err)
 	require.True(t, Held(sender))
 	clip, err := RecordHeld(t.Context(), sender, "ep/1", 3*time.Second)
@@ -236,7 +272,7 @@ func TestRecordGoesThroughTheCameraHold(t *testing.T) {
 	// A motion-only hold leaves the camera to the cloud path.
 	motionOnly := &fakeHost{holds: []hostclient.Hold{{ID: "hold-1", EndpointID: "ep/1", Kinds: []string{"motion"}, State: "live"}}}
 	r, _ = newResolver(t.TempDir(), motionOnly, nil, "")
-	sender, err = r.For(t.Context(), "ep/1", api.INTERFACE_PORTOS_RTC_SESSION)
+	sender, err = r.For(t.Context(), "ep/1", api.INTERFACE_PORTOS_RTC_SESSION, "")
 	require.NoError(t, err)
 	require.False(t, Held(sender))
 	_, err = RecordHeld(t.Context(), sender, "ep/1", time.Second)
@@ -244,7 +280,7 @@ func TestRecordGoesThroughTheCameraHold(t *testing.T) {
 
 	// A lease with no live hold never opens a camera session of its own.
 	r, _ = newResolver(t.TempDir(), &fakeHost{}, nil, "stale")
-	sender, err = r.For(t.Context(), "ep/1", api.INTERFACE_PORTOS_RTC_SESSION)
+	sender, err = r.For(t.Context(), "ep/1", api.INTERFACE_PORTOS_RTC_SESSION, "")
 	require.NoError(t, err)
 	_, err = RecordHeld(t.Context(), sender, "ep/1", time.Second)
 	require.Equal(t, exitcode.ExitHold, exitcode.Code(err))

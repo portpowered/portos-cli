@@ -528,6 +528,60 @@ var Commands = map[string]CommandDoc{
 			},
 		},
 	},
+	"port.message.go-to-point": {
+		ID: "port.message.go-to-point",
+		Path: []string{
+			"port",
+			"message",
+			"go-to-point",
+		},
+		Summary:            "Send a robot vacuum to a map point by its own path planning",
+		Description:        "Send a robot vacuum to a point on its map, in metres, without cleaning. Under a motion hold (the lease from session hold) it is one operation - the host ends the remote-control session, sends go-to-point, waits for the robot to arrive, starts the session again so the hold is live for the last metre, and prints the arrival pose; the robot stops near the point, not always on it. A trip gives up after 180 seconds, stops the robot and exits 10. Port OS refusals (invalid_value for another frame, value_out_of_range for a point off the map, map_not_active, go_to_point_not_started) keep their code. Without a hold the message goes to Port OS as is, which replies once the robot has started travelling; the robot must not be under remote control and --frame is required. A move sent while a trip is under way waits for the trip to finish.",
+		Category:           "messages",
+		CanonicalReference: "api/cli/commands.yaml",
+		Arguments: []ArgumentDoc{
+			{
+				Name:        "endpoint-id",
+				Description: "Robot vacuum endpoint ID or local endpoint alias.",
+				Required:    true,
+				Variadic:    false,
+			},
+			{
+				Name:        "x",
+				Description: "Position of the point along the frame x axis in metres, in the frame of the robot pose (x to the right).",
+				Required:    true,
+				Variadic:    false,
+			},
+			{
+				Name:        "y",
+				Description: "Position of the point along the frame y axis in metres, in the frame of the robot pose (y up).",
+				Required:    true,
+				Variadic:    false,
+			},
+		},
+		Flags: []FlagDoc{
+			{
+				Name:        "frame",
+				Shorthand:   "",
+				Type:        "string",
+				Default:     "",
+				Required:    false,
+				Description: "The relativeToGroupRouteId the robot's pose reports, for example the one in session hold output. Optional under a hold, which reads it from the pose; required without one.",
+			},
+		},
+		Examples: []ExampleDoc{
+			{
+				Description: "Cross the room under a hold and print the arrival pose.",
+				Invocation:  "port message go-to-point ep/a1b2c3d4 1.5 0 --lease \"$PORTOS_LEASE\" --json",
+				Output:      "",
+			},
+			{
+				Description: "Name the frame explicitly; put -- before a negative coordinate.",
+				Invocation:  "port message go-to-point ep/a1b2c3d4 --frame 12345/map:0 --lease \"$PORTOS_LEASE\" -- -2 3.25",
+				Output:      "",
+			},
+		},
+	},
 	"port.message.list-commands": {
 		ID: "port.message.list-commands",
 		Path: []string{

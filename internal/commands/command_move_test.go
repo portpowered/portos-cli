@@ -293,7 +293,7 @@ func (h *heldSender) Send(ctx context.Context, request *api.CreateMessageRequest
 
 type fixedResolver struct{ sender transport.Sender }
 
-func (f fixedResolver) For(context.Context, string, string) (transport.Sender, error) {
+func (f fixedResolver) For(context.Context, string, string, string) (transport.Sender, error) {
 	return f.sender, nil
 }
 

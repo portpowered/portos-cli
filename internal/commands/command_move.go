@@ -73,7 +73,7 @@ func (c *MoveCommand) Run(ctx context.Context, params MoveParams) error {
 		return fmt.Errorf("at least one movement instruction is required")
 	}
 
-	instructions, err := movegrammar.Parse(joinInstructions(params.Instructions))
+	instructions, err := movegrammar.Parse(joinInstructions(params.Instructions), movegrammar.DefaultBounds)
 	if err != nil {
 		return exitcode.NewInvalidArgument(fmt.Errorf("invalid move grammar: %w", err))
 	}
@@ -94,7 +94,7 @@ func (c *MoveCommand) Run(ctx context.Context, params MoveParams) error {
 func (c *MoveCommand) drive(ctx context.Context, endpointID string, instructions []movegrammar.Instruction) (MoveResult, error) {
 	result := MoveResult{EndpointID: endpointID, Replies: []api.RemoteControlInterfaceMoveResponseMessage{}}
 
-	sender, err := c.resolver.For(ctx, endpointID, rcNamespace)
+	sender, err := c.resolver.For(ctx, endpointID, rcNamespace, "move")
 	if err != nil {
 		return result, err
 	}

@@ -47,6 +47,7 @@ cp -rn "portos-cli-${VERSION#v}/skills/robot-navigation/tricks" ~/robot/
 | `port session release <holdId>` | Ends the session; the robot returns to its dock |
 | `port message remote-control/move <robot> --wait --body '{"velocity":0.2,"omega":0,"duration":5000}' --json` | One move. The reply body has `pose`, `distanceMetres` and `turnedDegrees` |
 | `port message move <robot> "rotate 90, forward 1m"` | The same moves from a short grammar, for one-off use |
+| `port message go-to-point <robot> --frame <routeId> -- <x> <y> --json` | Sends the robot to a point in metres by its own path planning (it does not clean), waits for it to arrive, and prints the arrival pose. The `--` lets a coordinate be negative. Needs the lease: the host ends your session, sends the robot, and starts the session again. `--frame` is optional under a hold |
 | `port endpoint attribute <robot> spatial/pose --force` | Reads the pose from the robot |
 | `port message snapshot <robot> --output frame.jpg` | Saves the camera's current frame (from the held camera when your hold has one) |
 | `port message record <robot> --output clip.mp4 --duration 30 --json` | Records the camera, with sound when it opens its own session. Under a `--camera` hold it records the held camera instead: video only, at most 600 seconds, and it needs the lease |
@@ -62,7 +63,7 @@ Exit codes let a script branch without reading text:
 | Exit | Means | Do |
 | --- | --- | --- |
 | 0 | done | read the measured reply |
-| 10 | the move was not carried out (obstacle, wall, dock) | read the pose, change direction or go around |
+| 10 | the move was not carried out (obstacle, wall, dock), or a go-to-point trip reported an error or took over 180 seconds (the robot was told to stop) | read the pose, change direction or go around |
 | 11 | the session is not active (the robot docked) | hold again |
 | 12 | busy (another move or clip) | wait for it, then resend |
 | 13 | hold problem: no lease, another hold's lease, or the hold ended | `port session status` says why; hold again if it ended |
@@ -87,10 +88,22 @@ with Robot("<robot endpoint id>") as robot:   # holds; leaving the block release
 - `move(velocity, omega, duration_ms)` sends one move and returns `MoveReply(pose, distance, turned)`. A failure raises its typed error: `NotCarriedOut` (with `.pose`, read after the stall), `SessionNotActive`, `Busy`, `HoldProblem`, `CameraUnavailable`.
 - `turn_by(degrees)` and `turn_to(heading)` turn in whole seconds with a scaled omega (73 degrees is omega 0.637 for 2000 ms) and correct until within 5 degrees.
 - `forward(metres)`, `drive_to(x, y, tolerance=0.10, leg=1.0)`: `drive_to` re-aims from the measured pose every leg, raises `NotCarriedOut` on a stall and `NotArrived` when it runs out of moves.
+- `go_to(x, y)` sends the robot across the house by its own route and returns the arrival pose; see Crossing rooms below.
 - `pose()` reads from the robot; `where()` is the newest pose a reply gave. `trail` is every pose seen.
 - `snapshot(path)`, `look_around(step_degrees, directory)`, `checkpoint(name, **data)`.
 - `rooms()` is the rooms of the robot's map (`id`, `name`, `shape`), chosen by the pose's frame; `scene(places)` adds the trail and the robot for `render_map.py`. Neither needs a hold.
 - When `PORTOS_LEASE` is already set, `Robot` uses that hold and leaves it open; whoever opens a hold releases it. So you can hold once, run several tricks under the same lease, judge their checkpoints between them, and release at the end.
+
+## Crossing rooms
+
+`go_to(x, y)` is the way to cross a room or the house: the robot plans its own route around furniture, so it needs no chain of legs. One call ends your session, sends the robot, waits for it to stop (up to 180 seconds), starts the session again and gives you the arrival pose. It does not clean. The point is in the pose's map frame, in metres; a point off the map is refused, and so is a frame that is not the pose's.
+
+The robot stops a few centimetres short of the point (about 5 cm on the S8), faces the way it travelled, and may sit in a spot you cannot see. So use each for what it is good at:
+
+- `go_to` for distance: the far side of a room, another room, the sofa from the dock. It knows the walls, so it is the safe choice when you cannot see the way.
+- `drive_to` and `turn_to` for the last metre: placing the robot on a mark, squaring up to a wall or lining up the camera. They are measured, one leg at a time, from the pose in each reply.
+
+Finish a crossing with a check: `robot.go_to(x, y)`, then `robot.drive_to(x, y, tolerance=0.05)` if it matters, then `robot.turn_to(heading)` and a snapshot. A move sent while a trip runs waits until the trip finishes, so run one script at a time. `go_to` raises `NotCarriedOut` when the robot reports an error or the trip times out (read `.pose`, look, try another route), and `RobotError` for a refusal such as a point outside the map.
 
 ## Tricks
 
@@ -135,7 +148,7 @@ json.dump(scene, open("scene.json", "w"))
 python3 ~/robot/tricks/lib/render_map.py scene.json map.png --around 3.2,1.5 --radius 3
 ```
 
-`scene.json` holds `rooms` (`name` and the GeoJSON `shape` from each room's `spatial/geometry` attribute), `trail` (`[[x, y], ...]` from `robot.trail`), `robot` (`x`, `y`, `heading`) and `places`. A room's shape lives on its group routes; only the route whose `relativeToGroupRouteId` matches the pose's is in the robot's map. Shapes change only when the robot remaps, so keep a copy in `~/robot/house/geometry/`. Look at the picture when you plan a route or explain where the robot is.
+`scene.json` holds `rooms` (`name` and the GeoJSON `shape` from each room's `spatial/geometry` attribute), `trail` (`[[x, y], ...]` from `robot.trail`), `robot` (`x`, `y`, `heading`) and `places`. A room's shape lives on its group routes; only the route whose `relativeToGroupRouteId` matches the pose's is in the robot's map. Shapes change only when the robot remaps, so keep a copy in `~/robot/house/geometry/`. Look at the picture when you plan a route or explain where the robot is. Choose every point a trick drives to from the shapes: inside a room, clear of its edges and holes by at least 0.3 m, with the straight path to it inside the room too. Holes are furniture. A point given only as a distance ahead (`back-and-forth --distance`) can land in one, and the robot then stops short with exit code 10.
 
 ## When things go wrong
 

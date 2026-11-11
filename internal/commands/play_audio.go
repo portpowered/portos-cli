@@ -66,7 +66,7 @@ func (c *PlayAudioCommand) Run(ctx context.Context, params PlayAudioParams) erro
 	if !ok {
 		return exitcode.NewInvalidArgument(fmt.Errorf("play-audio takes .ogg, .opus, .mp3, .wav, .m4a, .aac or .flac, not %q", filepath.Ext(params.FilePath)))
 	}
-	sender, err := c.resolver.For(ctx, params.EndpointID, api.INTERFACE_PORTOS_MEDIA_PLAYER)
+	sender, err := c.resolver.For(ctx, params.EndpointID, api.INTERFACE_PORTOS_MEDIA_PLAYER, api.INTERFACE_PORTOS_MEDIA_PLAYER_PLAY_AUDIO)
 	if err != nil {
 		return err
 	}

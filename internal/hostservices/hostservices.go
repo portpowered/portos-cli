@@ -26,8 +26,11 @@ const pauseReleaseTimeout = holds.DeadManCloseTimeout
 
 // Options configure New.
 type Options struct {
-	Clock      clock.Clock
-	Portos     portos.Client
+	Clock  clock.Clock
+	Portos portos.Client
+	// State reads the operational state and pose during a go-to-point trip;
+	// without it the hold refuses go-to-point.
+	State      portos.StateReader
 	Keepalive  keepalive.Mode
 	LoginCheck holds.LoginCheck
 	// Camera opens held camera streams; without it holds cannot cover the camera.
@@ -47,7 +50,7 @@ type Built struct {
 // New composes the holds, motion and messages services.
 func New(opts Options) Built {
 	var holdSvc holds.Service
-	motionSvc := motion.New(opts.Portos, opts.Clock, opts.Keepalive, func(holdID string, reason holds.Reason, detail string) {
+	motionSvc := motion.New(opts.Portos, opts.State, opts.Clock, opts.Keepalive, func(holdID string, reason holds.Reason, detail string) {
 		ctx, cancel := context.WithTimeout(context.Background(), fatalReleaseTimeout)
 		defer cancel()
 		_ = holdSvc.Release(ctx, holdID, reason, detail)
