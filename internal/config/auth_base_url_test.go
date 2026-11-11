@@ -24,6 +24,21 @@ func TestLoadConfig_HostedDefaultsSeparateAPIAuthAndBrowserOrigins(t *testing.T)
 	}
 }
 
+func TestLoadConfig_NoConfigTargetsHostedPortOS(t *testing.T) {
+	t.Setenv(EnvAPIBaseURL, "")
+	manager, err := NewManager(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := manager.LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig() with no config file: %v", err)
+	}
+	if cfg.APIBaseURL != DefaultAPIBaseURL || cfg.AuthBaseURL != DefaultAuthBaseURL || cfg.BrowserAuthorizationBaseURL != "https://portoperatingsystem.com" {
+		t.Fatalf("origins = api %q, auth %q, browser %q; want the hosted defaults", cfg.APIBaseURL, cfg.AuthBaseURL, cfg.BrowserAuthorizationBaseURL)
+	}
+}
+
 func TestLoadConfig_AuthBaseURLFromFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.yaml")

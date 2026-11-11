@@ -115,8 +115,9 @@ func (m *Manager) EnsureConfigDir() error {
 	return nil
 }
 
-// LoadConfig loads configuration from the config.yaml file.
-// Returns an error if the API base URL is not configured.
+// LoadConfig loads configuration from the config.yaml file and the environment.
+// With no API base URL configured it targets hosted Port OS, the same URL `port init` writes,
+// so a freshly installed binary can sign in and run without a config file.
 func (m *Manager) LoadConfig() (*Config, error) {
 	cfg, err := m.configStorage.Load()
 	if err != nil {
@@ -124,7 +125,7 @@ func (m *Manager) LoadConfig() (*Config, error) {
 	}
 
 	if cfg.APIBaseURL == "" {
-		return nil, fmt.Errorf("API base URL not configured. Set %s or add api_base_url to your config file", EnvAPIBaseURL)
+		cfg.APIBaseURL = DefaultAPIBaseURL
 	}
 
 	if err := validateAPIBaseURL(cfg.APIBaseURL); err != nil {

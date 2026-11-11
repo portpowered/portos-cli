@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"net"
 
 	"github.com/portpowered/portos-cli/internal/api"
 )
@@ -27,10 +28,16 @@ type Client interface {
 	Relay() RelayClient
 }
 
-// RelayClient fetches credentials for the Port OS media relay.
+// RelayClient fetches credentials for the Port OS media relay and tunnels to it.
 type RelayClient interface {
 	// Credentials returns short-lived TURN credentials for the authenticated principal.
 	Credentials(ctx context.Context) (*api.RelayCredentials, error)
+	// Proxied reports whether requests to the API go through an HTTP proxy (HTTPS_PROXY and
+	// friends). Such networks usually refuse direct TCP to the relay.
+	Proxied() bool
+	// Tunnel opens a byte stream to the relay through the API's GET /relay-tunnel WebSocket,
+	// through the HTTP proxy when one is configured.
+	Tunnel(ctx context.Context) (net.Conn, error)
 }
 
 // EndpointsClient defines the interface for endpoint operations

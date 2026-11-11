@@ -16,6 +16,7 @@ require (
 	github.com/knadh/koanf/v2 v2.3.0
 	github.com/oapi-codegen/runtime v1.1.1
 	github.com/pion/rtp v1.10.1
+	github.com/pion/turn/v4 v4.1.4
 	github.com/pion/webrtc/v4 v4.2.7
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
@@ -46,7 +47,6 @@ require (
 	github.com/pion/srtp/v3 v3.0.10 // indirect
 	github.com/pion/stun/v3 v3.1.1 // indirect
 	github.com/pion/transport/v4 v4.0.1 // indirect
-	github.com/pion/turn/v4 v4.1.4 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/rogpeppe/go-internal v1.16.0 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect

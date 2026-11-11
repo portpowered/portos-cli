@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net"
 	"time"
 
 	"github.com/pion/webrtc/v4"
@@ -83,6 +84,33 @@ func (r *Recorder) iceConfiguration(ctx context.Context, relayOnly bool) (webrtc
 	return webrtc.Configuration{ICEServers: append(servers, relay...)}, nil
 }
 
+// peerConnectionAPI reaches the relay through the API's relay tunnel when the API is reached
+// through an HTTP proxy, since such networks (agent sandboxes, corporate egress) usually refuse
+// direct TCP to the relay. Pion dials every TURN-over-TCP server through the proxy dialer.
+func (r *Recorder) peerConnectionAPI(ctx context.Context) *webrtc.API {
+	relay := r.apiClient.Relay()
+	if relay == nil || !relay.Proxied() {
+		return webrtc.NewAPI()
+	}
+	r.logger.Logger().Info("API is behind an HTTP proxy: reaching the relay through the relay tunnel")
+	settings := webrtc.SettingEngine{}
+	settings.SetICEProxyDialer(tunnelDialer{ctx: ctx, relay: relay})
+	return webrtc.NewAPI(webrtc.WithSettingEngine(settings))
+}
+
+// tunnelDialer is the ICE proxy dialer. The tunnel always leads to the Port OS relay, whose TURN
+// URL is the only TCP TURN server the recorder offers, so the address is not needed.
+type tunnelDialer struct {
+	ctx   context.Context
+	relay apiclient.RelayClient
+}
+
+func (d tunnelDialer) Dial(_, _ string) (net.Conn, error) {
+	ctx, cancel := context.WithTimeout(d.ctx, iceGatherTimeout)
+	defer cancel()
+	return d.relay.Tunnel(ctx)
+}
+
 // Run establishes an RTC session (non-trickle ICE), records video for the given duration to a temp file, then disconnects.
 // Returns the path to the temp file; the caller must remove it when done.
 func (r *Recorder) Run(ctx context.Context, params RecorderParams) (*RecorderResult, error) {
@@ -97,7 +125,7 @@ func (r *Recorder) Run(ctx context.Context, params RecorderParams) (*RecorderRes
 	if err != nil {
 		return nil, err
 	}
-	peerConnection, err := webrtc.NewPeerConnection(config)
+	peerConnection, err := r.peerConnectionAPI(ctx).NewPeerConnection(config)
 	if err != nil {
 		return nil, fmt.Errorf("create peer connection: %w", err)
 	}

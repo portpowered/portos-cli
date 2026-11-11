@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"errors"
+	"net"
 	"strings"
 	"testing"
 
@@ -25,6 +26,12 @@ func (c relayClient) Relay() apiclient.RelayClient { return c }
 
 func (c relayClient) Credentials(context.Context) (*api.RelayCredentials, error) {
 	return c.credentials, c.err
+}
+
+func (c relayClient) Proxied() bool { return false }
+
+func (c relayClient) Tunnel(context.Context) (net.Conn, error) {
+	return nil, errors.New("no relay tunnel in tests")
 }
 
 var stun = webrtc.ICEServer{URLs: []string{"stun:stun.example.test:19302"}}
