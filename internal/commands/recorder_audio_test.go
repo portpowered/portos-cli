@@ -288,6 +288,27 @@ func TestRecorderWritesVideoAndOpusAudioTracks(t *testing.T) {
 	}
 }
 
+// A camera slow to send its first keyframe still yields the full duration: the window runs
+// from the first recorded frame, and the audio keeps recording to the same end.
+func TestRecorderCountsTheDurationFromTheFirstKeyframe(t *testing.T) {
+	src := syntheticSource(8, 25)
+	for i := 0; i < 50; i++ { // the first keyframe arrives 2 s in
+		src.video[i] = nal(0x41, 0x9a, 0x24, 0x6c)
+	}
+	camera := &pionCamera{src: src, withAudio: true}
+	result, err := recordFromCamera(t, camera, RecorderParams{Duration: 3 * time.Second, Audio: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer result.Remove()
+	if result.VideoSpan < 2800*time.Millisecond || result.VideoSpan > 3500*time.Millisecond {
+		t.Fatalf("video span %v for a 3 s capture whose first keyframe came 2 s late", result.VideoSpan)
+	}
+	if lead := result.VideoStart.Sub(result.AudioStart); lead < 1500*time.Millisecond {
+		t.Fatalf("the video started %v after the audio, want about 2 s", lead)
+	}
+}
+
 func TestRecorderWithoutDeviceAudioSavesVideoOnly(t *testing.T) {
 	camera := &pionCamera{src: syntheticSource(6, 25), withAudio: false}
 	result, err := recordFromCamera(t, camera, RecorderParams{Duration: 2 * time.Second, Audio: true})

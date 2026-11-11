@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/portpowered/portos-cli/internal/auth"
@@ -148,12 +149,16 @@ func TestAuthLoginUnknownFlag(t *testing.T) {
 	rootCmd := cli.Generate()
 	rootCmd.SetOut(testWriter.Stdout())
 	rootCmd.SetErr(testWriter.Stderr())
-	// --client-id is no longer a supported flag; passing it should cause an error
-	rootCmd.SetArgs(ArgsWithConfigDir(configDir, "auth", "login", "--client-id", "some-id"))
+	// A flag login does not define must fail before any login starts. (--client-id is a real
+	// flag again, for --client-credentials; with it this test opened a browser sign-in.)
+	rootCmd.SetArgs(ArgsWithConfigDir(configDir, "auth", "login", "--no-such-flag", "some-id"))
 
 	ctx := context.Background()
 	err = rootCmd.ExecuteContext(ctx)
 	if err == nil {
-		t.Fatal("expected error for unknown --client-id flag, but got none")
+		t.Fatal("expected error for an unknown flag, but got none")
+	}
+	if !strings.Contains(err.Error(), "unknown flag") {
+		t.Fatalf("error %q, want an unknown-flag error", err)
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"net"
 	"time"
 
+	"github.com/pion/rtcp"
 	"github.com/pion/webrtc/v4"
 	"github.com/portpowered/portos-cli/internal/api"
 	apiclient "github.com/portpowered/portos-cli/internal/api_client"
@@ -151,9 +152,7 @@ func (r *Recorder) Run(ctx context.Context, params RecorderParams) (*RecorderRes
 		r.logger.Logger().Info("connection state changed", zap.String("state", state.String()))
 	})
 
-	peerConnection.OnTrack(func(track *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
-		r.handleTrack(recordCtx, st, track)
-	})
+	r.recordTracks(recordCtx, st, peerConnection)
 
 	offerSDP, err := gatherOffer(ctx, peerConnection)
 	if err != nil {
@@ -191,6 +190,17 @@ func (r *Recorder) Run(ctx context.Context, params RecorderParams) (*RecorderRes
 	}
 	delivered = true
 	return result, nil
+}
+
+// recordTracks records each track the camera sends. The clip starts at the first keyframe, so
+// a video track is asked for one at once rather than left to send it on its own schedule.
+func (r *Recorder) recordTracks(recordCtx context.Context, st *recordState, pc *webrtc.PeerConnection) {
+	pc.OnTrack(func(track *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
+		if track.Kind() == webrtc.RTPCodecTypeVideo {
+			_ = pc.WriteRTCP([]rtcp.Packet{&rtcp.PictureLossIndication{MediaSSRC: uint32(track.SSRC())}})
+		}
+		r.handleTrack(recordCtx, st, track)
+	})
 }
 
 func gatherOffer(ctx context.Context, pc *webrtc.PeerConnection) (string, error) {

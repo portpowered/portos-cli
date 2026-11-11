@@ -53,7 +53,8 @@ type recordState struct {
 	mu           sync.Mutex
 	started      bool
 	shuttingDown bool
-	deadline     time.Time // one capture window for both tracks, from the first track's arrival
+	deadline     time.Time // one capture window for both tracks; see arm and startWindow
+	latestEnd    time.Time // the furthest startWindow may move the deadline
 	audioStarted bool
 	audioPath    string
 	audioStart   time.Time
@@ -74,11 +75,35 @@ func newRecordState(params RecorderParams) *recordState {
 	}
 }
 
-// arm fixes the shared deadline on the first track and returns it. Callers hold st.mu.
-func (st *recordState) arm() time.Time {
+// arm opens the shared capture window on the first track. Callers hold st.mu.
+func (st *recordState) arm() {
 	if st.deadline.IsZero() {
-		st.deadline = time.Now().Add(st.params.Duration)
+		now := time.Now()
+		st.deadline = now.Add(st.params.Duration)
+		st.latestEnd = st.deadline.Add(frameWaitTimeout)
 	}
+}
+
+// startWindow restarts the capture window at the first recorded video frame. Writers wait for
+// a keyframe, and a camera slow to send one (the Roborock S8 takes about a second) would
+// otherwise leave the clip that much short. The window starts at most frameWaitTimeout late,
+// which the session's lifetime allows for.
+func (st *recordState) startWindow(at time.Time) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	end := at.Add(st.params.Duration)
+	if end.After(st.latestEnd) {
+		end = st.latestEnd
+	}
+	if end.After(st.deadline) {
+		st.deadline = end
+	}
+}
+
+// windowEnd is when both tracks stop recording.
+func (st *recordState) windowEnd() time.Time {
+	st.mu.Lock()
+	defer st.mu.Unlock()
 	return st.deadline
 }
 
@@ -188,11 +213,11 @@ func (r *Recorder) startVideo(recordCtx context.Context, st *recordState, track 
 		return
 	}
 	st.started = true
-	deadline := st.arm()
+	st.arm()
 	st.mu.Unlock()
 	defer close(st.done)
 	close(st.startedCh)
-	r.recordVideoTrack(recordCtx, st, deadline, track)
+	r.recordVideoTrack(recordCtx, st, track)
 }
 
 func (r *Recorder) startAudio(recordCtx context.Context, st *recordState, track *webrtc.TrackRemote) {
@@ -206,27 +231,39 @@ func (r *Recorder) startAudio(recordCtx context.Context, st *recordState, track 
 		return
 	}
 	st.audioStarted = true
-	deadline := st.arm()
+	st.arm()
 	st.mu.Unlock()
 	defer close(st.audioDone)
-	r.recordAudioTrack(recordCtx, st, deadline, track)
+	r.recordAudioTrack(recordCtx, st, track)
 }
 
 // readTrack feeds every packet to handle until the deadline, cancellation or a read error.
-// Reaching the deadline is not an error.
-func readTrack(ctx context.Context, track *webrtc.TrackRemote, deadline time.Time, handle func(*rtp.Packet) error) error {
-	_ = track.SetReadDeadline(deadline)
+// The deadline may move later while the track is read. Reaching it is not an error.
+func readTrack(ctx context.Context, track *webrtc.TrackRemote, deadline func() time.Time, handle func(*rtp.Packet) error) error {
+	set := deadline()
+	_ = track.SetReadDeadline(set)
 	stopInterrupt := context.AfterFunc(ctx, func() { _ = track.SetReadDeadline(time.Now()) })
 	defer stopInterrupt()
-	for time.Now().Before(deadline) {
+	for {
+		end := deadline()
+		if !time.Now().Before(end) {
+			return nil
+		}
+		if !end.Equal(set) {
+			set = end
+			_ = track.SetReadDeadline(end)
+		}
+		if ctx.Err() != nil { // cancelled while the deadline moved
+			return ctx.Err()
+		}
 		packet, _, err := track.ReadRTP()
 		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
 			var timeout net.Error
-			if errors.As(err, &timeout) && timeout.Timeout() && !time.Now().Before(deadline) {
-				return nil
+			if errors.As(err, &timeout) && timeout.Timeout() {
+				continue // the loop ends here unless the deadline moved
 			}
 			return err
 		}
@@ -234,8 +271,10 @@ func readTrack(ctx context.Context, track *webrtc.TrackRemote, deadline time.Tim
 			return err
 		}
 	}
-	return nil
 }
+
+// fixedDeadline is a deadline for readTrack that never moves.
+func fixedDeadline(at time.Time) func() time.Time { return func() time.Time { return at } }
 
 // videoFormat maps a negotiated MIME type to the temp-file extension and codec name.
 func videoFormat(mime string) (ext, name string, err error) {
@@ -257,7 +296,7 @@ func clipStart(written []uint32, firstSeen time.Time, firstTS uint32) time.Time 
 	return firstSeen
 }
 
-func (r *Recorder) recordVideoTrack(recordCtx context.Context, st *recordState, deadline time.Time, track *webrtc.TrackRemote) {
+func (r *Recorder) recordVideoTrack(recordCtx context.Context, st *recordState, track *webrtc.TrackRemote) {
 	mime := strings.ToLower(track.Codec().MimeType)
 	r.logger.Logger().Info("video codec negotiated", zap.String("mime", track.Codec().MimeType))
 
@@ -297,13 +336,18 @@ func (r *Recorder) recordVideoTrack(recordCtx context.Context, st *recordState, 
 	var (
 		firstSeen time.Time
 		firstTS   uint32
+		windowed  bool // the capture window restarted at the first written frame
 	)
-	err = readTrack(recordCtx, track, deadline, func(packet *rtp.Packet) error {
+	err = readTrack(recordCtx, track, st.windowEnd, func(packet *rtp.Packet) error {
 		if firstSeen.IsZero() {
 			firstSeen, firstTS = time.Now(), packet.Timestamp
 		}
 		if err := writer.WriteRTP(packet); err != nil {
 			return fmt.Errorf("write RTP: %w", err)
+		}
+		if !windowed && len(writer.WrittenStamps()) > 0 {
+			windowed = true
+			st.startWindow(time.Now())
 		}
 		return nil
 	})
@@ -335,7 +379,7 @@ func (r *Recorder) recordVideoTrack(recordCtx context.Context, st *recordState, 
 
 // recordAudioTrack writes the Opus track to an Ogg file. Audio is best effort: any failure
 // leaves the recording video-only.
-func (r *Recorder) recordAudioTrack(recordCtx context.Context, st *recordState, deadline time.Time, track *webrtc.TrackRemote) {
+func (r *Recorder) recordAudioTrack(recordCtx context.Context, st *recordState, track *webrtc.TrackRemote) {
 	tmpFile, err := os.CreateTemp("", "portos-record-*.ogg")
 	if err != nil {
 		r.logger.Logger().Warn("audio temp file", zap.Error(err))
@@ -350,7 +394,7 @@ func (r *Recorder) recordAudioTrack(recordCtx context.Context, st *recordState, 
 		return
 	}
 	var first time.Time
-	err = readTrack(recordCtx, track, deadline, func(packet *rtp.Packet) error {
+	err = readTrack(recordCtx, track, st.windowEnd, func(packet *rtp.Packet) error {
 		if first.IsZero() {
 			first = time.Now()
 		}

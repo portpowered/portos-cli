@@ -180,7 +180,7 @@ func (h *HeldCamera) readVideo(ctx context.Context, track *webrtc.TrackRemote, s
 	h.mu.Unlock()
 	first := true
 	deadline := time.Now().Add(h.params.Lifetime + time.Minute)
-	err = readTrack(ctx, track, deadline, func(packet *rtp.Packet) error {
+	err = readTrack(ctx, track, fixedDeadline(deadline), func(packet *rtp.Packet) error {
 		framed, err := h.write(packet)
 		if err == nil && framed && first {
 			first = false
