@@ -27,8 +27,9 @@ const (
 	pidFileName     = "host.pid"
 	defaultIdleExit = 5 * time.Minute
 	shutdownGrace   = 60 * time.Second
-	// shutdownEndBound bounds ending every hold when a signal stops the host.
-	shutdownEndBound   = 60 * time.Second
+	// shutdownEndBound bounds ending every hold when a signal stops the host;
+	// like a release, it leaves every dock try its time.
+	shutdownEndBound   = releaseTimeout
 	readHeaderTimeout  = 5 * time.Second
 	idlePollInterval   = time.Second
 	watchdogInterval   = time.Second

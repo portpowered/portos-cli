@@ -29,8 +29,14 @@ const seqNumKey = "seqNum"
 const (
 	// keepaliveTimeout bounds one keepalive send so a hung request cannot block queued moves or the dock.
 	keepaliveTimeout = 15 * time.Second
-	// closeTimeout bounds the end-session and return-to-dock pair, which runs even if the caller gave up.
+	// closeTimeout bounds each send of a close (end-session, every return-to-dock try), which runs even if the caller gave up.
 	closeTimeout = 30 * time.Second
+	// DockAttempts is how many times a close sends return-to-dock while the replies fail.
+	DockAttempts = 3
+	// DockRetryPause is how long a close waits before it sends return-to-dock again.
+	DockRetryPause = 10 * time.Second
+	// CloseBudget is the longest a close can take: end-session, then every return-to-dock try and the pauses between them.
+	CloseBudget = closeTimeout*(1+DockAttempts) + DockRetryPause*(DockAttempts-1)
 	// TripTimeout is how long GoToPoint waits for the robot to arrive before it
 	// sends stop and fails with CodeGoToPointTimeout.
 	TripTimeout = 180 * time.Second
@@ -594,21 +600,49 @@ func (s *session) shutdown(ctx context.Context) error {
 	if notActive {
 		return nil // the robot is already docked: nothing to send
 	}
-	// Send the robot home even if the caller gave up; other fatal reasons get one best-effort try.
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), closeTimeout)
-	defer cancel()
+	// Send the robot home even if the caller gave up. Each send has its own
+	// budget, so a provider that times out on end-session still leaves the dock its full time.
 	var errs []error
 	if !down { // a trip that gave way to this close left the session ended already
-		end := api.INTERFACE_PORTOS_REMOTE_CONTROL_END_SESSION
-		reply, err := s.svc.client.SendSync(ctx, s.endpoint, api.INTERFACE_PORTOS_REMOTE_CONTROL, end, map[string]any{})
-		if err := replyError(end, reply, err); err != nil {
+		if err := s.closeSend(ctx, api.INTERFACE_PORTOS_REMOTE_CONTROL, api.INTERFACE_PORTOS_REMOTE_CONTROL_END_SESSION); err != nil {
 			errs = append(errs, err)
 		}
 	}
-	dock := api.INTERFACE_PORTOS_ROBOTIC_VACUUM_CLEANER_RETURN_TO_DOCK
-	reply, err := s.svc.client.SendSync(ctx, s.endpoint, api.INTERFACE_PORTOS_ROBOTIC_VACUUM_CLEANER, dock, map[string]any{})
-	if err := replyError(dock, reply, err); err != nil {
+	if err := s.sendHome(ctx); err != nil {
 		errs = append(errs, err)
 	}
 	return errors.Join(errs...)
+}
+
+// sendHome sends return-to-dock, and sends it again after a pause while the
+// replies fail, up to DockAttempts tries. A provider that timed out often
+// answers the next try. An auth rejection is not retried: the next try would be rejected too.
+func (s *session) sendHome(ctx context.Context) error {
+	dock := api.INTERFACE_PORTOS_ROBOTIC_VACUUM_CLEANER_RETURN_TO_DOCK
+	for try := 1; ; try++ {
+		err := s.closeSend(ctx, api.INTERFACE_PORTOS_ROBOTIC_VACUUM_CLEANER, dock)
+		if err == nil || portos.IsUnauthorized(err) {
+			return err
+		}
+		if try == DockAttempts {
+			return fmt.Errorf("%w (sent %d times)", err, try)
+		}
+		s.pause(DockRetryPause)
+	}
+}
+
+// closeSend sends one message of a close on its own budget, detached from the caller.
+func (s *session) closeSend(ctx context.Context, namespace, name string) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), closeTimeout)
+	defer cancel()
+	reply, err := s.svc.client.SendSync(ctx, s.endpoint, namespace, name, map[string]any{})
+	return replyError(name, reply, err)
+}
+
+// pause waits d on the service clock.
+func (s *session) pause(d time.Duration) {
+	done := make(chan struct{})
+	t := s.svc.clock.AfterFunc(d, func() { close(done) })
+	defer t.Stop()
+	<-done
 }

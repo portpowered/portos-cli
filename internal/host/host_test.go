@@ -241,7 +241,7 @@ func TestSignalRunsOnShutdownBeforeTheServerStops(t *testing.T) {
 	case c := <-shutdownCtx:
 		require.NoError(t, c.err, "the shutdown context ignores the cancelled one")
 		require.True(t, c.hasDL)
-		require.LessOrEqual(t, time.Until(c.deadline), 60*time.Second)
+		require.LessOrEqual(t, time.Until(c.deadline), shutdownEndBound)
 	default:
 		t.Fatal("OnShutdown did not run")
 	}

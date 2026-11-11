@@ -20,8 +20,9 @@ import (
 const StateEnded = "ended"
 
 // releaseTimeout bounds how long DELETE /holds/{id} waits for the sessions to
-// close (the robot is sent home within it).
-const releaseTimeout = 60 * time.Second
+// close (the robot is sent home within it, retrying the dock through provider
+// timeouts for up to motion.CloseBudget).
+const releaseTimeout = 150 * time.Second
 
 // openTimeout bounds how long POST /holds waits for the sessions to open.
 const openTimeout = 60 * time.Second

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -453,6 +454,83 @@ func TestCloseSendsRobotHomeEvenWithCancelledContext(t *testing.T) {
 	_ = r.svc.Close(ctx, holdID, holds.Ending{Reason: holds.ReasonReleased})
 	require.Eventually(t, func() bool { return len(r.client.snapshot()) == 3 }, waitFor, pollEvery)
 	require.Equal(t, "return-to-dock", r.client.names()[2])
+}
+
+// dockFails answers every return-to-dock before try `succeedOn` with a provider
+// timeout (succeedOn 0: every try fails) and every other send with success.
+func dockFails(succeedOn int) func(int, call) (*api.MessageRequest, error) {
+	var tries atomic.Int32
+	return func(_ int, c call) (*api.MessageRequest, error) {
+		if c.name != "return-to-dock" {
+			return moveReply(0, 0), nil
+		}
+		if try := int(tries.Add(1)); succeedOn == 0 || try < succeedOn {
+			return failedReply("provider_timeout"), nil
+		}
+		return moveReply(0, 0), nil
+	}
+}
+
+// closeAdvancing closes the hold while advancing the clock past each dock retry pause.
+func (r *rig) closeAdvancing(t *testing.T) error {
+	t.Helper()
+	closed := make(chan error, 1)
+	go func() {
+		closed <- r.svc.Close(context.Background(), holdID, holds.Ending{Reason: holds.ReasonReleased})
+	}()
+	for {
+		select {
+		case err := <-closed:
+			return err
+		case <-time.After(pollEvery):
+			r.clock.Advance(motion.DockRetryPause)
+		}
+	}
+}
+
+func (r *rig) docks() int {
+	n := 0
+	for _, name := range r.client.names() {
+		if name == "return-to-dock" {
+			n++
+		}
+	}
+	return n
+}
+
+func TestCloseSendsTheDockAgainAfterAProviderTimeout(t *testing.T) {
+	r := newRig(keepalive.ModePing)
+	r.open(t)
+	r.client.handler = dockFails(2)
+	require.NoError(t, r.closeAdvancing(t))
+	require.Equal(t, []string{"start-session", "end-session", "return-to-dock", "return-to-dock"}, r.client.names())
+}
+
+func TestCloseGivesUpOnTheDockAfterThreeTries(t *testing.T) {
+	r := newRig(keepalive.ModePing)
+	r.open(t)
+	r.client.handler = dockFails(0)
+	err := r.closeAdvancing(t)
+	require.ErrorContains(t, err, "sent 3 times")
+	require.Equal(t, motion.DockAttempts, r.docks())
+}
+
+func TestCloseStillDocksWhenEndSessionTimesOut(t *testing.T) {
+	r := newRig(keepalive.ModePing)
+	r.open(t)
+	r.client.handler = func(_ int, c call) (*api.MessageRequest, error) {
+		if c.name == "end-session" {
+			return nil, context.DeadlineExceeded
+		}
+		return moveReply(0, 0), nil
+	}
+	err := r.svc.Close(context.Background(), holdID, holds.Ending{Reason: holds.ReasonReleased})
+	require.ErrorIs(t, err, context.DeadlineExceeded, "the end-session failure is reported")
+	require.Equal(t, []string{"start-session", "end-session", "return-to-dock"}, r.client.names(), "and the robot is still sent home once")
+}
+
+func TestAHoldEndingWaitsLongEnoughForEveryDockTry(t *testing.T) {
+	require.LessOrEqual(t, motion.CloseBudget, holds.DeadManCloseTimeout)
 }
 
 func TestSecondOpenForSameHoldIsRejected(t *testing.T) {

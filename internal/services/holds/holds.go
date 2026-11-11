@@ -73,8 +73,10 @@ const (
 )
 
 // DeadManCloseTimeout bounds how long a dead-man ending waits for the sessions
-// to close, so a hung endpoint cannot leave a hold ending forever.
-const DeadManCloseTimeout = 60 * time.Second
+// to close, so a hung endpoint cannot leave a hold ending forever. It covers a
+// motion close that sends end-session and then return-to-dock three times
+// through provider timeouts (motion.CloseBudget).
+const DeadManCloseTimeout = 150 * time.Second
 
 // DefaultDeadMan is the dead-man period used when a hold does not name one.
 const DefaultDeadMan = 10 * time.Minute

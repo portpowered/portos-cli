@@ -154,6 +154,7 @@ python3 ~/robot/tricks/lib/render_map.py scene.json map.png --around 3.2,1.5 --r
 ## When things go wrong
 
 - **The hold you opened is gone** (`port session status` does not list it, or says `host-paused`): the session host stopped or your machine paused. Read the robot's state; if it is not docked, send it home with `port message robotic-vacuum-cleaner/return-to-dock <robot>`. Hold again before the next move.
+- **The release reports an error** (a provider timeout on end-session or return-to-dock): the release already sent the robot home up to three times, so it can take two minutes to answer. Read the robot's state; if it is still not docked, wait a minute and send it home with `port message robotic-vacuum-cleaner/return-to-dock <robot>`. Do not start the next run until it is docked.
 - **A move keeps coming back not carried out:** something blocks that way. Look (`snapshot`) before you release, so the stall comes with a frame; back off (`forward(-0.2)`), turn and go around. When the map shows the way open, the block is something the map does not know (a bag, a box): let `go_to` plan around it for that leg. Record the trap.
 - **The pose looks wrong** (the robot was picked up, or the map changed): take a frame of a known view such as the dock, compare it with your reference photo, and re-teach places if the frame changed.
 - **A kept route fails** (a closed door, a moved chair): only the camera says why. Record the failure on the card and teach an alternative.
