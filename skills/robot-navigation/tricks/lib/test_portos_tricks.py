@@ -45,10 +45,11 @@ class FakePort:
     """A robot on an open floor: moves follow the kinematics, scaled by `turn_gain` for turns, with
     an optional wall at x = wall_x that stops forward motion."""
 
-    def __init__(self, x=0.0, y=0.0, heading=0.0, turn_gain=1.0, wall_x=None):
+    def __init__(self, x=0.0, y=0.0, heading=0.0, turn_gain=1.0, wall_x=None, turn_floor=None):
         self.x, self.y, self.heading = x, y, heading
         self.turn_gain = turn_gain
         self.wall_x = wall_x
+        self.turn_floor = turn_floor  # a turn in place measuring under this is refused, as the S8's 5 degrees
         self.env = {}
         self.calls = []
         self.trips = []
@@ -79,6 +80,8 @@ class FakePort:
             self.x = nx
             moved = math.hypot(self.x - start[0], self.y - start[1])
             if body["velocity"] != 0 and moved < 0.05:
+                raise NotCarriedOut(10, "the robot did not move as asked")
+            if body["velocity"] == 0 and self.turn_floor is not None and abs(turned) < self.turn_floor:
                 raise NotCarriedOut(10, "the robot did not move as asked")
             return {"results": [{"message": {"body": {"pose": self._pose(), "distanceMetres": moved,
                                                        "turnedDegrees": turned}}}]}
@@ -164,6 +167,29 @@ class Correction(unittest.TestCase):
             robot.drive_to(2.0, 0.0)
         self.assertAlmostEqual(stalled.exception.pose.x, 0.5)
 
+    def test_drive_to_drives_on_when_the_aim_misses_by_less_than_the_tolerance(self):
+        port = FakePort(heading=0)
+        robot = self.robot(port)
+        robot.pose()
+        pose = robot.drive_to(0.4, 0.04)  # 5.7 degrees off, a 4 cm miss
+        first = json.loads(port.calls[1][port.calls[1].index("--body") + 1])
+        self.assertGreater(first["velocity"], 0, "no correction turn for a miss inside the tolerance")
+        self.assertLess(math.hypot(pose.x - 0.4, pose.y - 0.04), 0.10)
+
+    def test_a_small_correction_the_robot_refuses_is_close_enough(self):
+        port = FakePort(heading=0, turn_gain=0.8, turn_floor=5)  # 6 degrees asked, 4.8 delivered, refused
+        robot = self.robot(port)
+        robot.pose()
+        pose = robot.turn_to(6)
+        self.assertLess(abs(angle_diff(6, pose.heading)), 2)
+
+    def test_a_large_turn_the_robot_refuses_still_raises(self):
+        port = FakePort(heading=0, turn_gain=0.04, turn_floor=5)
+        robot = self.robot(port)
+        robot.pose()
+        with self.assertRaises(NotCarriedOut):
+            robot.turn_to(90)
+
     def test_drive_to_gives_up_after_its_moves(self):
         port = FakePort()
         robot = self.robot(port)
@@ -240,6 +266,14 @@ class Holding(unittest.TestCase):
                 raise RuntimeError("trick failed")
         self.assertIn(["session", "release", "h1", "--json"], port.calls)
         self.assertNotIn("PORTOS_LEASE", port.env)
+
+    def test_camera_true_holds_the_camera_too(self):
+        port = FakePort()
+        with Robot("vacuum", port=port, camera=True, log=io.StringIO()):
+            pass
+        hold = next(c for c in port.calls if c[:2] == ["session", "hold"])
+        self.assertIn("--camera", hold)
+        self.assertIn("--motion", hold)
 
     def test_an_existing_lease_is_used_and_left_open(self):
         port = FakePort()

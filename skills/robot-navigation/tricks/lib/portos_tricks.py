@@ -37,6 +37,9 @@ EXIT_CAMERA = 14
 # The robot rejects a turn in place under 5 degrees and a drive under 5 cm as not carried out.
 MIN_TURN_DEGREES = 5.0
 MIN_DRIVE_METRES = 0.05
+# A correction turn under this can measure under the 5 degree floor (the robot turns a little short)
+# and be refused; the heading it reached is close enough.
+SMALL_TURN_DEGREES = 2 * MIN_TURN_DEGREES
 # A straight drive that turned more than this went around something: re-aim before the next leg.
 BEND_DEGREES = 15.0
 
@@ -236,11 +239,12 @@ class Robot:
     when the trick fails."""
 
     def __init__(self, endpoint: str, port: Optional[Port] = None, bounds: Bounds = Bounds(),
-                 dead_man: str = "", log=None):
+                 dead_man: str = "", camera: bool = False, log=None):
         self.endpoint = endpoint
         self.port = port or Port()
         self.bounds = bounds
         self.dead_man = dead_man
+        self.camera = camera
         self.hold_id = ""
         self.owns_hold = False
         self.last_pose: Optional[Pose] = None
@@ -252,10 +256,12 @@ class Robot:
     # Hold and release.
 
     def hold(self) -> "Robot":
-        """Opens a motion hold, unless PORTOS_LEASE already names one."""
+        """Opens a motion hold (with the camera when camera=True), unless PORTOS_LEASE already names one."""
         if self.port.env.get("PORTOS_LEASE"):
             return self
         args = ["session", "hold", self.endpoint, "--motion"]
+        if self.camera:
+            args.append("--camera")
         if self.dead_man:
             args += ["--dead-man", self.dead_man]
         opened = self.port.json(args)
@@ -339,8 +345,12 @@ class Robot:
             remaining = degrees - turned
             if abs(remaining) < MIN_TURN_DEGREES:
                 break
-            for omega, duration in turn_plan(remaining, self.bounds):
-                turned += self._turn_move(omega, duration).turned
+            try:
+                for omega, duration in turn_plan(remaining, self.bounds):
+                    turned += self._turn_move(omega, duration).turned
+            except NotCarriedOut as failure:
+                self._close_enough(remaining, failure)
+                break
         return turned
 
     def turn_to(self, heading: float, attempts: int = 3) -> Pose:
@@ -352,9 +362,20 @@ class Robot:
             remaining = angle_diff(heading, current)
             if abs(remaining) < MIN_TURN_DEGREES:
                 break
-            for omega, duration in turn_plan(remaining, self.bounds):
-                self._turn_move(omega, duration)
+            try:
+                for omega, duration in turn_plan(remaining, self.bounds):
+                    self._turn_move(omega, duration)
+            except NotCarriedOut as failure:
+                self._close_enough(remaining, failure)
+                break
         return self.where()
+
+    def _close_enough(self, remaining: float, failure: NotCarriedOut) -> None:
+        """Keeps the pose a refused correction turn reached, or raises when the turn was not small."""
+        if abs(remaining) >= SMALL_TURN_DEGREES:
+            raise failure
+        if failure.pose is not None:
+            self._seen(failure.pose)
 
     def forward(self, metres: float) -> MoveReply:
         """Drives straight for metres (negative reverses), in one move of at most the longest allowed."""
@@ -374,7 +395,7 @@ class Robot:
             if distance <= max(tolerance, MIN_DRIVE_METRES):
                 return here
             want = bearing(here.x, here.y, x, y)
-            if here.heading is None or abs(angle_diff(want, here.heading)) >= MIN_TURN_DEGREES:
+            if here.heading is None or not self._aimed(angle_diff(want, here.heading), distance, tolerance):
                 self.turn_to(want)
             reply = self.forward(min(distance, leg))
             if abs(reply.turned) > BEND_DEGREES:
@@ -383,6 +404,14 @@ class Robot:
         if math.hypot(x - here.x, y - here.y) <= max(tolerance, MIN_DRIVE_METRES):
             return here
         raise NotArrived((x, y), here)
+
+    @staticmethod
+    def _aimed(error: float, distance: float, tolerance: float) -> bool:
+        """Whether driving on along the heading misses the point by no more than half the tolerance."""
+        error = abs(error)
+        if error < MIN_TURN_DEGREES:
+            return True
+        return error < 45 and distance * math.sin(math.radians(error)) <= tolerance / 2
 
     def go_to(self, x: float, y: float, frame: str = "") -> Pose:
         """Sends the robot to (x, y) metres by its own path planning and returns the arrival pose.

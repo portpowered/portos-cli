@@ -86,12 +86,13 @@ with Robot("<robot endpoint id>") as robot:   # holds; leaving the block release
 ```
 
 - `move(velocity, omega, duration_ms)` sends one move and returns `MoveReply(pose, distance, turned)`. A failure raises its typed error: `NotCarriedOut` (with `.pose`, read after the stall), `SessionNotActive`, `Busy`, `HoldProblem`, `CameraUnavailable`.
-- `turn_by(degrees)` and `turn_to(heading)` turn in whole seconds with a scaled omega (73 degrees is omega 0.637 for 2000 ms) and correct until within 5 degrees.
-- `forward(metres)`, `drive_to(x, y, tolerance=0.10, leg=1.0)`: `drive_to` re-aims from the measured pose every leg, raises `NotCarriedOut` on a stall and `NotArrived` when it runs out of moves.
+- `turn_by(degrees)` and `turn_to(heading)` turn in whole seconds with a scaled omega (73 degrees is omega 0.637 for 2000 ms) and correct until within 5 degrees. The robot refuses a turn that measures under 5 degrees, and it turns a little short, so a correction under 10 degrees that comes back refused counts as close enough.
+- `forward(metres)`, `drive_to(x, y, tolerance=0.10, leg=1.0)`: `drive_to` re-aims from the measured pose before a leg when driving on would miss the point by more than half the tolerance, raises `NotCarriedOut` on a stall and `NotArrived` when it runs out of moves.
 - `go_to(x, y)` sends the robot across the house by its own route and returns the arrival pose; see Crossing rooms below.
 - `pose()` reads from the robot; `where()` is the newest pose a reply gave. `trail` is every pose seen.
 - `snapshot(path)`, `look_around(step_degrees, directory)`, `checkpoint(name, **data)`.
 - `rooms()` is the rooms of the robot's map (`id`, `name`, `shape`), chosen by the pose's frame; `scene(places)` adds the trail and the robot for `render_map.py`. Neither needs a hold.
+- `Robot(endpoint, camera=True)` holds the camera too (`--camera`), so each snapshot takes about a second.
 - When `PORTOS_LEASE` is already set, `Robot` uses that hold and leaves it open; whoever opens a hold releases it. So you can hold once, run several tricks under the same lease, judge their checkpoints between them, and release at the end.
 
 ## Crossing rooms
@@ -153,7 +154,7 @@ python3 ~/robot/tricks/lib/render_map.py scene.json map.png --around 3.2,1.5 --r
 ## When things go wrong
 
 - **The hold you opened is gone** (`port session status` does not list it, or says `host-paused`): the session host stopped or your machine paused. Read the robot's state; if it is not docked, send it home with `port message robotic-vacuum-cleaner/return-to-dock <robot>`. Hold again before the next move.
-- **A move keeps coming back not carried out:** something blocks that way. Look (`snapshot`), back off (`forward(-0.2)`), turn and go around. Record the trap.
+- **A move keeps coming back not carried out:** something blocks that way. Look (`snapshot`) before you release, so the stall comes with a frame; back off (`forward(-0.2)`), turn and go around. When the map shows the way open, the block is something the map does not know (a bag, a box): let `go_to` plan around it for that leg. Record the trap.
 - **The pose looks wrong** (the robot was picked up, or the map changed): take a frame of a known view such as the dock, compare it with your reference photo, and re-teach places if the frame changed.
 - **A kept route fails** (a closed door, a moved chair): only the camera says why. Record the failure on the card and teach an alternative.
 - **The camera refuses** (exit 14): another viewer may hold it (the app, a live view). Under a `--camera` hold this means the held camera was taken away; `port session status` shows `lostReason`. The robot stays held; carry on without frames, or release and hold again.
