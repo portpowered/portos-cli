@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"crypto/tls"
 	"net/http"
 
 	"github.com/portpowered/portos-cli/internal/api"
@@ -10,6 +11,10 @@ import (
 // RelayClientImpl implements the RelayClient interface.
 type RelayClientImpl struct {
 	client *ClientImpl
+
+	// proxy and tlsConfig are for tests: nil means http.ProxyFromEnvironment and the system roots.
+	proxy     proxyFunc
+	tlsConfig *tls.Config
 }
 
 // Credentials fetches short-lived TURN credentials for the Port OS media relay.

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -22,11 +23,11 @@ func (r *RelayClientImpl) Proxied() bool {
 	if err := r.client.ensureInited(); err != nil {
 		return false
 	}
-	request, err := http.NewRequest(http.MethodGet, r.client.baseURL+"/relay-tunnel", nil)
+	target, err := url.Parse(r.client.baseURL + "/relay-tunnel")
 	if err != nil {
 		return false
 	}
-	proxyURL, err := http.ProxyFromEnvironment(request)
+	proxyURL, err := r.proxyFor(target)
 	return err == nil && proxyURL != nil
 }
 
@@ -42,14 +43,19 @@ func (r *RelayClientImpl) Tunnel(ctx context.Context) (net.Conn, error) {
 	if token == "" {
 		return nil, &SetupError{Message: "no access token — authenticate with \"port auth login\", \"port auth set-token <token>\", or PORTOS_ACCESS_TOKEN", Err: auth.ErrNoCredentials}
 	}
-	dialer := websocket.Dialer{Proxy: http.ProxyFromEnvironment, HandshakeTimeout: tunnelHandshakeTimeout}
-	url := "ws" + strings.TrimPrefix(r.client.baseURL, "http") + "/relay-tunnel"
-	socket, response, err := dialer.DialContext(ctx, url, http.Header{"Authorization": {"Bearer " + token}})
+	target, err := url.Parse(r.client.baseURL + "/relay-tunnel")
+	if err != nil {
+		return nil, fmt.Errorf("relay tunnel: %w", err)
+	}
+	dial := func(ctx context.Context, _, addr string) (net.Conn, error) { return r.dialTunnel(ctx, target, addr) }
+	dialer := websocket.Dialer{NetDialContext: dial, NetDialTLSContext: dial, HandshakeTimeout: tunnelHandshakeTimeout}
+	socketURL := "ws" + strings.TrimPrefix(r.client.baseURL, "http") + "/relay-tunnel"
+	socket, response, err := dialer.DialContext(ctx, socketURL, http.Header{"Authorization": {"Bearer " + token}})
 	if err != nil {
 		if response != nil {
 			body, _ := io.ReadAll(io.LimitReader(response.Body, 1024))
 			_ = response.Body.Close()
-			return nil, fmt.Errorf("relay tunnel refused: HTTP %d %s", response.StatusCode, strings.TrimSpace(string(body)))
+			return nil, fmt.Errorf("relay tunnel refused: HTTP %d %s (%v)", response.StatusCode, strings.TrimSpace(string(body)), err)
 		}
 		return nil, fmt.Errorf("relay tunnel: %w", err)
 	}
