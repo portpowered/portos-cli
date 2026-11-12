@@ -882,8 +882,8 @@ var Commands = map[string]CommandDoc{
 			"message",
 			"step-ptz",
 		},
-		Summary:            "Step a held camera left, right, up or down",
-		Description:        "Move a camera one pan or tilt step in the session of a camera hold (the lease from session hold --camera). The host sends the step in the hold's own camera session and fills the session ID, so there is nothing to look up. It works under a single-peer hold and under a shared one (session hold --camera --shared). Without a lease and a live camera hold the step is refused as hold_lease_required (exit 13), because a step needs the caller's own camera session. Take a snapshot after the step to see the new view.",
+		Summary:            "Turn a held camera left, right, up or down by a step or by degrees",
+		Description:        "Turn a camera in the session of a camera hold (the lease from session hold --camera), by one pan or tilt step or by about --degrees. The camera rounds degrees to whole steps and stops at the end of its range, so --degrees 360 turns it all the way to that end. The reply says how far the camera turned and where it now points. Pan counts degrees right of the left end and tilt counts degrees up from the bottom end once the camera has been turned to an end in this session, and from the session start before that, so turn to an end first to know exactly where the camera points. The host sends the turn in the hold's own camera session and fills the session ID. It works under a single-peer hold and under a shared one (session hold --camera --shared). Without a lease and a live camera hold the turn is refused as hold_lease_required (exit 13). Take a snapshot after the turn to see the new view.",
 		Category:           "messages",
 		CanonicalReference: "api/cli/commands.yaml",
 		Arguments: []ArgumentDoc{
@@ -900,11 +900,25 @@ var Commands = map[string]CommandDoc{
 				Variadic:    false,
 			},
 		},
-		Flags: []FlagDoc{},
+		Flags: []FlagDoc{
+			{
+				Name:        "degrees",
+				Shorthand:   "",
+				Type:        "float64",
+				Default:     "0",
+				Required:    false,
+				Description: "About how far to turn, 1 to 360. 360 turns the camera to the end of its range in that direction. Without it the camera turns one step.",
+			},
+		},
 		Examples: []ExampleDoc{
 			{
-				Description: "Step the held camera left, then look.",
-				Invocation:  "port message step-ptz ep/a1b2c3d4 LEFT --lease \"$PORTOS_LEASE\" && port message snapshot ep/a1b2c3d4 view.jpg --lease \"$PORTOS_LEASE\"",
+				Description: "Turn the held camera all the way left, then look.",
+				Invocation:  "port message step-ptz ep/a1b2c3d4 LEFT --degrees 360 --lease \"$PORTOS_LEASE\" && port message snapshot ep/a1b2c3d4 view.jpg --lease \"$PORTOS_LEASE\"",
+				Output:      "",
+			},
+			{
+				Description: "Look up about 30 degrees and print the new position as JSON.",
+				Invocation:  "port message step-ptz ep/a1b2c3d4 UP --degrees 30 --lease \"$PORTOS_LEASE\" --json",
 				Output:      "",
 			},
 		},

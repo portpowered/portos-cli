@@ -107,20 +107,33 @@ required.`,
 // GenerateStepPTZ returns the cobra command for step-ptz, which shares the move
 // command's implementation.
 func (c *MoveCliCommand) GenerateStepPTZ() *cobra.Command {
-	return &cobra.Command{
-		Short: "Step a held camera left, right, up or down",
-		Long: `Move a camera one pan or tilt step in the session of a camera hold.
+	var degrees float64
+	command := &cobra.Command{
+		Short: "Turn a held camera left, right, up or down by a step or by degrees",
+		Long: `Turn a camera in the session of a camera hold, by one pan or tilt step or by
+about --degrees. The camera rounds degrees to whole steps and stops at the end of
+its range, so --degrees 360 turns it all the way to that end.
 
-Pass the hold's lease with --lease or PORTOS_LEASE. The host sends the step in
+The reply says how far the camera turned and where it now points: pan in degrees
+right of the left end and tilt in degrees up from the bottom end, once the camera
+has been turned to an end in this session, and from the session start before
+that. Turn to an end first (LEFT --degrees 360, DOWN --degrees 360) to know
+exactly where the camera points.
+
+Pass the hold's lease with --lease or PORTOS_LEASE. The host sends the turn in
 the hold's own camera session, so there is no session ID to handle. Without a
-live hold behind a lease the step is refused with hold_lease_required (exit 13).
-Take a snapshot after the step to see the new view.`,
-		Example: `  port msg step-ptz ep/0abc LEFT --lease "$PORTOS_LEASE"`,
-		Args:    cobra.ExactArgs(2),
+live hold behind a lease the turn is refused with hold_lease_required (exit 13).
+Take a snapshot after the turn to see the new view.`,
+		Example: `  port msg step-ptz ep/0abc LEFT --degrees 360 --lease "$PORTOS_LEASE"
+  port msg step-ptz ep/0abc UP --degrees 30 --lease "$PORTOS_LEASE"
+  port msg step-ptz ep/0abc RIGHT --lease "$PORTOS_LEASE"`,
+		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return c.command.StepPTZ(cmd.Context(), commands.StepPTZParams{EndpointID: args[0], Direction: args[1]})
+			return c.command.StepPTZ(cmd.Context(), commands.StepPTZParams{EndpointID: args[0], Direction: args[1], Degrees: degrees})
 		},
 	}
+	command.Flags().Float64Var(&degrees, "degrees", 0, "about how far to turn, 1 to 360; 360 turns to the end (default one step)")
+	return command
 }
 
 // SnapshotCommand wraps the snapshot command implementation.

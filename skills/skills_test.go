@@ -8,20 +8,10 @@ import (
 	"testing"
 )
 
-// TestRobotNavigationHelper runs the starter helper's Python tests, so `go test ./...` covers the
-// helper the navigation skill ships. The test reads every Python file first: Go's test cache keys
-// on the files a test opens, and the interpreter's reads are invisible to it.
-func TestRobotNavigationHelper(t *testing.T) {
-	lib := filepath.Join("robot-navigation", "tricks", "lib")
-	scripts, err := filepath.Glob(filepath.Join("robot-navigation", "tricks", "*", "*.py"))
-	if err != nil || len(scripts) == 0 {
-		t.Fatalf("no trick scripts found: %v", err)
-	}
-	for _, script := range scripts {
-		if _, err := os.ReadFile(script); err != nil {
-			t.Fatal(err)
-		}
-	}
+// TestSkillHelpers runs each skill's starter helper Python tests, so `go test ./...` covers the
+// helpers the skills ship. The test reads every Python file first: Go's test cache keys on the
+// files a test opens, and the interpreter's reads are invisible to it.
+func TestSkillHelpers(t *testing.T) {
 	python := ""
 	for _, name := range []string{"python3", "python"} {
 		if path, err := exec.LookPath(name); err == nil {
@@ -30,21 +20,36 @@ func TestRobotNavigationHelper(t *testing.T) {
 		}
 	}
 	if python == "" {
-		t.Fatal("the navigation skill's helper tests need python3 on PATH")
+		t.Fatal("the skills' helper tests need python3 on PATH")
 	}
-	cmd := exec.Command(python, "-I", "-B", "-m", "unittest", "discover", "-s", lib, "-t", lib, "-p", "test_*.py")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("python helper tests failed: %v\n%s", err, out)
+	for _, skill := range []string{"robot-navigation", "camera-look-around"} {
+		t.Run(skill, func(t *testing.T) {
+			lib := filepath.Join(skill, "tricks", "lib")
+			scripts, err := filepath.Glob(filepath.Join(skill, "tricks", "*", "*.py"))
+			if err != nil || len(scripts) == 0 {
+				t.Fatalf("no trick scripts found: %v", err)
+			}
+			for _, script := range scripts {
+				if _, err := os.ReadFile(script); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cmd := exec.Command(python, "-I", "-B", "-m", "unittest", "discover", "-s", lib, "-t", lib, "-p", "test_*.py")
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("python helper tests failed: %v\n%s", err, out)
+			}
+			t.Logf("%s", out)
+		})
 	}
-	t.Logf("%s", out)
 }
 
 // skillCommands maps each shipped skill to commands its SKILL.md must name, so a rename in the CLI
 // fails here until the skill follows.
 var skillCommands = map[string][]string{
-	"robot-navigation":   {"port session hold", "port session release", "port message go-to-point"},
-	"camera-look-around": {"port session hold", "--shared", "port message step-ptz", "port message snapshot", "port session release", "hold_lease_required", "shared_hold_no_talkback", "session_expired", "session_closed"},
+	"robot-navigation": {"port session hold", "port session release", "port message go-to-point"},
+	"camera-look-around": {"port session hold", "--shared", "port message step-ptz", "--degrees 360", "port message snapshot", "port session release",
+		"hold_lease_required", "shared_hold_no_talkback", "session_expired", "session_closed", "LEFT_END", "BOTTOM_END", "panorama", "look_at"},
 }
 
 // TestSkillsAreRegistered checks every skill directory has a SKILL.md whose front matter names the

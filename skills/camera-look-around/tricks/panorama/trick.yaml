@@ -1,0 +1,13 @@
+name: panorama
+does: Turns the camera to its left end, then sweeps right to the right end, saving a frame every few degrees, and hands the frames back with their angles.
+run: python3 tricks/panorama/run.py <camera> --every 60 --out frames/
+parameters:
+  every: most degrees between two frames (default 60)
+  tilt: tilt angle up from the bottom end to sweep at (default where the camera already points)
+  out: directory for the frames
+checkpoints:
+  panorama: the frames with the pan and tilt each was taken at; you look at them and describe the room
+validated: never
+runs: 0
+successes: 0
+notes: []

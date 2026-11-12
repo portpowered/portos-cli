@@ -264,6 +264,18 @@ const (
 	CameraInterfaceConfigurationSupportedStreamingProtocolsWEBRTC CameraInterfaceConfigurationSupportedStreamingProtocols = "WEBRTC"
 )
 
+// Defines values for CameraInterfacePtzPositionMessagePanReference.
+const (
+	CameraInterfacePtzPositionMessagePanReferenceLEFTEND      CameraInterfacePtzPositionMessagePanReference = "LEFT_END"
+	CameraInterfacePtzPositionMessagePanReferenceSESSIONSTART CameraInterfacePtzPositionMessagePanReference = "SESSION_START"
+)
+
+// Defines values for CameraInterfacePtzPositionMessageTiltReference.
+const (
+	CameraInterfacePtzPositionMessageTiltReferenceBOTTOMEND    CameraInterfacePtzPositionMessageTiltReference = "BOTTOM_END"
+	CameraInterfacePtzPositionMessageTiltReferenceSESSIONSTART CameraInterfacePtzPositionMessageTiltReference = "SESSION_START"
+)
+
 // Defines values for CameraInterfaceStartStreamingMessageStreamingProtocol.
 const (
 	CameraInterfaceStartStreamingMessageStreamingProtocolDASH   CameraInterfaceStartStreamingMessageStreamingProtocol = "DASH"
@@ -3730,6 +3742,51 @@ type CameraInterfacePtzControlMessageEnvelope struct {
 // CameraInterfacePtzControlMessageHeader Identifies this capability message.
 type CameraInterfacePtzControlMessageHeader = MessageHeader
 
+// CameraInterfacePtzPositionMessage Where a pan-tilt camera points after a step-ptz request, estimated from the steps the provider has sent in this camera session. Pan counts degrees to the right of panReference and tilt counts degrees up from tiltReference. A reference is the end of the range once the camera has been turned to that end in this session, and the session start before that.
+type CameraInterfacePtzPositionMessage struct {
+	// MovedDegrees How far this request turned the camera, in degrees, after rounding to whole steps and stopping at the end of the range.
+	MovedDegrees float32 `json:"movedDegrees"`
+
+	// PanDegrees Degrees to the right of panReference. Negative means left of the session start.
+	PanDegrees float32 `json:"panDegrees"`
+
+	// PanRangeDegrees How far the camera can pan from its left end to its right end.
+	PanRangeDegrees float32 `json:"panRangeDegrees"`
+
+	// PanReference LEFT_END once the camera has been turned to its left or right end in this session, so panDegrees runs from 0 to panRangeDegrees.
+	PanReference CameraInterfacePtzPositionMessagePanReference `json:"panReference"`
+
+	// TiltDegrees Degrees up from tiltReference. Negative means below the session start.
+	TiltDegrees float32 `json:"tiltDegrees"`
+
+	// TiltRangeDegrees How far the camera can tilt from its bottom end to its top end.
+	TiltRangeDegrees float32 `json:"tiltRangeDegrees"`
+
+	// TiltReference BOTTOM_END once the camera has been turned to its top or bottom end in this session, so tiltDegrees runs from 0 to tiltRangeDegrees.
+	TiltReference CameraInterfacePtzPositionMessageTiltReference `json:"tiltReference"`
+}
+
+// CameraInterfacePtzPositionMessagePanReference LEFT_END once the camera has been turned to its left or right end in this session, so panDegrees runs from 0 to panRangeDegrees.
+type CameraInterfacePtzPositionMessagePanReference string
+
+// CameraInterfacePtzPositionMessageTiltReference BOTTOM_END once the camera has been turned to its top or bottom end in this session, so tiltDegrees runs from 0 to tiltRangeDegrees.
+type CameraInterfacePtzPositionMessageTiltReference string
+
+// CameraInterfacePtzPositionMessageEnvelope The `ptz-position` message (version 1.0) of the `port1/systems/zero/capability-interfaces/camera` capability interface, as returned by an endpoint. The header identifies the message and selects the body schema.
+type CameraInterfacePtzPositionMessageEnvelope struct {
+	// Body Where a pan-tilt camera points after a step-ptz request, estimated from the steps the provider has sent in this camera session. Pan counts degrees to the right of panReference and tilt counts degrees up from tiltReference. A reference is the end of the range once the camera has been turned to that end in this session, and the session start before that.
+	Body CameraInterfacePtzPositionMessage `json:"body"`
+
+	// CorrelationToken Token used for correlating related messages
+	CorrelationToken *string `json:"correlationToken,omitempty"`
+
+	// Header Identifies this capability message.
+	Header CameraInterfacePtzPositionMessageHeader `json:"header"`
+}
+
+// CameraInterfacePtzPositionMessageHeader Identifies this capability message.
+type CameraInterfacePtzPositionMessageHeader = MessageHeader
+
 // CameraInterfaceSetMotionDetectionMessage Turn motion detection on or off for the camera.
 type CameraInterfaceSetMotionDetectionMessage struct {
 	// Enabled Whether to enable motion detection
@@ -3778,8 +3835,10 @@ type CameraInterfaceStartStreamingMessageEnvelope struct {
 // CameraInterfaceStartStreamingMessageHeader Identifies this capability message.
 type CameraInterfaceStartStreamingMessageHeader = MessageHeader
 
-// CameraInterfaceStepPtzMessage Move one provider-defined pan or tilt step in an active camera session. This does not select an absolute position, initiate continuous movement or provide zoom. The session must belong to the same authorized caller and endpoint.
+// CameraInterfaceStepPtzMessage Turn the camera left, right, up or down in an active camera session, by one provider-defined step or by about the given number of degrees. The provider rounds degrees to whole steps and stops at the end of the camera's range, so 360 turns the camera to that end. The provider answers with a ptz-position message saying where the camera now points. This does not select an absolute position, initiate continuous movement or provide zoom. The session must belong to the same authorized caller and endpoint.
 type CameraInterfaceStepPtzMessage struct {
+	// Degrees About how far to turn, in degrees. Without it the camera turns one step. 360 turns the camera to the end of its range in that direction.
+	Degrees   *float32                               `json:"degrees,omitempty"`
 	Direction CameraInterfaceStepPtzMessageDirection `json:"direction"`
 
 	// SessionId ID of the caller's active RTC session on this endpoint.
@@ -3791,7 +3850,7 @@ type CameraInterfaceStepPtzMessageDirection string
 
 // CameraInterfaceStepPtzMessageEnvelope The `step-ptz` message (version 1.0) of the `port1/systems/zero/capability-interfaces/camera` capability interface, as sent to an endpoint. The header identifies the message and selects the body schema.
 type CameraInterfaceStepPtzMessageEnvelope struct {
-	// Body Move one provider-defined pan or tilt step in an active camera session. This does not select an absolute position, initiate continuous movement or provide zoom. The session must belong to the same authorized caller and endpoint.
+	// Body Turn the camera left, right, up or down in an active camera session, by one provider-defined step or by about the given number of degrees. The provider rounds degrees to whole steps and stops at the end of the camera's range, so 360 turns the camera to that end. The provider answers with a ptz-position message saying where the camera now points. This does not select an absolute position, initiate continuous movement or provide zoom. The session must belong to the same authorized caller and endpoint.
 	Body CameraInterfaceStepPtzMessage `json:"body"`
 
 	// CorrelationToken Token used for correlating related messages

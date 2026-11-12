@@ -89,3 +89,73 @@ func TestStepPTZPassesTheHostsRefusalToTheExitCode(t *testing.T) {
 		t.Fatalf("exit code = %d (%v), want %d", code, err, exitcode.ExitCamera)
 	}
 }
+
+// ptzPositionReply is a host reply carrying the provider's ptz-position answer.
+func ptzPositionReply(position map[string]any) *api.MessageRequest {
+	name := api.INTERFACE_PORTOS_CAMERA_PTZ_POSITION
+	return &api.MessageRequest{Id: "req", Status: api.SUCCEEDED, Results: []api.MessageRequestResult{{TargetId: "ep/1", Message: &api.CapabilityResponseMessage{
+		Header: &api.MessageHeader{Namespace: api.INTERFACE_PORTOS_CAMERA, Name: name, Version: "1.0"}, Body: position,
+	}}}}
+}
+
+func TestStepPTZSendsDegreesAndPrintsWhereTheCameraPoints(t *testing.T) {
+	messages := &scriptedMessages{responses: []*api.MessageRequest{ptzPositionReply(map[string]any{
+		"movedDegrees": 46, "panDegrees": 0, "panReference": "LEFT_END", "panRangeDegrees": 340,
+		"tiltDegrees": -15, "tiltReference": "SESSION_START", "tiltRangeDegrees": 169,
+	})}}
+	formatter := &recordingFormatter{}
+	cmd := NewMoveCommand(fixedResolver{&heldSender{messages}}, formatter, logging.NewLoggerRef(), nil)
+	if err := cmd.StepPTZ(t.Context(), StepPTZParams{EndpointID: "ep/1", Direction: "left", Degrees: 360}); err != nil {
+		t.Fatal(err)
+	}
+	if body := messages.sent[0].Message.Body; body["direction"] != "LEFT" || body["degrees"] != float64(360) || len(body) != 2 {
+		t.Fatalf("body = %v, want the direction and degrees", body)
+	}
+	want := "Turned ep/1 LEFT 46°. Now pan 0° right of the left end (range 0 to 340°), " +
+		"tilt 15° below the session start (bottom end unknown until you turn to an end)."
+	if len(formatter.printed) != 1 || formatter.printed[0] != want {
+		t.Fatalf("printed %q\nwant    %q", formatter.printed, want)
+	}
+}
+
+func TestStepPTZJSONCarriesThePosition(t *testing.T) {
+	messages := &scriptedMessages{responses: []*api.MessageRequest{ptzPositionReply(map[string]any{
+		"movedDegrees": 31, "panDegrees": -15, "panReference": "SESSION_START", "panRangeDegrees": 340,
+		"tiltDegrees": 31, "tiltReference": "BOTTOM_END", "tiltRangeDegrees": 169,
+	})}}
+	formatter := &recordingFormatter{json: true}
+	cmd := NewMoveCommand(fixedResolver{&heldSender{messages}}, formatter, logging.NewLoggerRef(), nil)
+	if err := cmd.StepPTZ(t.Context(), StepPTZParams{EndpointID: "ep/1", Direction: "UP", Degrees: 30}); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := formatter.printed[0].(StepPTZResult)
+	if !ok || got.Degrees != 30 || got.Position == nil || got.Position.TiltDegrees != 31 ||
+		got.Position.TiltReference != api.CameraInterfacePtzPositionMessageTiltReferenceBOTTOMEND || got.Position.PanDegrees != -15 {
+		t.Fatalf("printed = %+v", formatter.printed)
+	}
+	if text := describeStepPTZ(got); text != "Turned ep/1 UP 31°. Now pan 15° left of the session start (left end unknown until you turn to an end), tilt 31° up from the bottom end (range 0 to 169°)." {
+		t.Fatalf("text = %q", text)
+	}
+}
+
+func TestStepPTZRejectsDegreesOutOfRangeWithoutSending(t *testing.T) {
+	for _, degrees := range []float64{0.5, -10, 361} {
+		messages := &scriptedMessages{}
+		cmd := NewMoveCommand(fixedResolver{&heldSender{messages}}, &recordingFormatter{}, logging.NewLoggerRef(), nil)
+		err := cmd.StepPTZ(t.Context(), StepPTZParams{EndpointID: "ep/1", Direction: "UP", Degrees: degrees})
+		if code := exitcode.Code(err); code != exitcode.ExitInvalid || len(messages.sent) != 0 {
+			t.Fatalf("degrees %g: exit code %d (%v), sent %d", degrees, code, err, len(messages.sent))
+		}
+	}
+}
+
+func TestStepPTZWithoutAPositionAnswerSaysSo(t *testing.T) {
+	formatter := &recordingFormatter{}
+	cmd := NewMoveCommand(fixedResolver{&heldSender{&scriptedMessages{}}}, formatter, logging.NewLoggerRef(), nil)
+	if err := cmd.StepPTZ(t.Context(), StepPTZParams{EndpointID: "ep/1", Direction: "RIGHT"}); err != nil {
+		t.Fatal(err)
+	}
+	if formatter.printed[0] != "Stepped ep/1 RIGHT; the camera reported no position" {
+		t.Fatalf("printed %q", formatter.printed)
+	}
+}

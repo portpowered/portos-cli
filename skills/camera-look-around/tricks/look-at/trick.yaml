@@ -1,0 +1,13 @@
+name: look-at
+does: Points the camera at a pan and tilt angle (degrees from the left and bottom ends), turning to the ends first when the angles are not known yet, and saves a frame.
+run: python3 tricks/look-at/run.py <camera> --pan 170 --tilt 40 --out sofa.jpg
+parameters:
+  pan: degrees right of the left end
+  tilt: degrees up from the bottom end
+  out: path for the frame
+checkpoints:
+  look-at: the frame and where the camera points; you check that it shows what you meant
+validated: never
+runs: 0
+successes: 0
+notes: []
