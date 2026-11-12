@@ -67,7 +67,7 @@ Angles are counted from the turns the camera made, rounded to whole steps of abo
 | `port message record <camera> --output clip.mp4 --duration 10` | Records your hold's video (no sound) |
 | `port session release <holdId>` | Detaches |
 
-A turn takes about half a second per 15 degrees plus about half a second for the command, so a quarter turn is about 3 seconds and a full sweep from one end to the other about 12 seconds.
+One step (15 degrees, no `--degrees`) answers in about half a second. A longer turn takes about a second per 15 degrees, because the camera drops a step that comes too soon after the last one, so a quarter turn is about 6 seconds and a run from one end to the other about 25 seconds. Ring sometimes takes 2 seconds to confirm a step, so allow up to twice that. Send one turn with `--degrees` and wait for its answer; never send turns in parallel.
 
 ## Recipes
 
