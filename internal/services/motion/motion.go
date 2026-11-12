@@ -24,6 +24,9 @@ import (
 // in remote control (it is back on its dock).
 const providerNotActive = "remote_control_not_active"
 
+// providerNotStarted is a start-session whose wait ended while the robot was still moving.
+const providerNotStarted = "remote_control_not_started"
+
 const seqNumKey = "seqNum"
 
 const (
@@ -44,8 +47,13 @@ const (
 	TripPollInterval = time.Second
 	// tripStateFailures is how many state reads in a row may fail before the trip is given up.
 	tripStateFailures = 3
-	// tripCleanupTimeout bounds the stop and start-session sends that follow a trip, which run even if the caller gave up.
-	tripCleanupTimeout = 30 * time.Second
+	// tripCleanupTimeout bounds the stop and start-session sends that follow a trip, which run even if the caller gave
+	// up. It outlasts Port OS's own 30 s request deadline, so a slow provider answers with its typed timeout.
+	tripCleanupTimeout = 40 * time.Second
+	// RestartAttempts is how many times a trip's end sends start-session while the provider times out or no answer comes back.
+	RestartAttempts = 3
+	// RestartRetryPause is how long a trip's end waits before it sends start-session again.
+	RestartRetryPause = 5 * time.Second
 )
 
 // Provider codes GoToPoint adds to the ones Port OS returns.
@@ -56,7 +64,8 @@ const (
 	CodeGoToPointTimeout = "go_to_point_timeout"
 	// CodeGoToPointStateUnavailable is a trip whose operational state could not be read.
 	CodeGoToPointStateUnavailable = "go_to_point_state_unavailable"
-	// CodeGoToPointSessionLost is a trip after which Port OS refused to start the remote-control session again; the hold ends.
+	// CodeGoToPointSessionLost is a trip after which Port OS refused to start the remote-control session again, or
+	// timed out on every one of RestartAttempts tries; the hold ends.
 	CodeGoToPointSessionLost = "go_to_point_session_lost"
 )
 

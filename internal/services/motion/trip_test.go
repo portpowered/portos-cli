@@ -271,17 +271,81 @@ func TestGoToPointRefusedRestartEndsTheHold(t *testing.T) {
 	r.state.set(arrivedAt(1.5, 0))
 	r.client.handler = func(n int, c call) (*api.MessageRequest, error) {
 		if c.name == "start-session" {
-			return failedReply("remote_control_not_started"), nil
+			return failedReply("remote_control_busy"), nil
 		}
 		return moveReply(0, 0), nil
 	}
 	o := r.finish(t, r.startTrip(tripBody()))
 	requireCode(t, o.err, motion.CodeGoToPointSessionLost)
+	require.Equal(t, []string{"start-session", "end-session", "go-to-point", "start-session"}, r.client.names(), "a refusal is not sent again")
 	f := <-r.fatals
 	require.Equal(t, holds.ReasonEndpointError, f.reason)
 	require.Equal(t, holdID, f.holdID)
 	_, err := r.svc.Move(context.Background(), holdID, agentMove())
 	require.Error(t, err, "a dead session takes no more moves")
+}
+
+// restartCalls counts the start-session sends after the one that opened the hold.
+func restartCalls(names []string) int {
+	n := -1
+	for _, name := range names {
+		if name == "start-session" {
+			n++
+		}
+	}
+	return n
+}
+
+func TestGoToPointRestartRidesOutASlowProvider(t *testing.T) {
+	for name, failure := range map[string]func() (*api.MessageRequest, error){
+		"provider timeout": func() (*api.MessageRequest, error) {
+			return failedReply(string(api.ErrorCodePROVIDERTIMEOUT)), nil
+		},
+		"no answer":    func() (*api.MessageRequest, error) { return nil, context.DeadlineExceeded },
+		"still moving": func() (*api.MessageRequest, error) { return failedReply("remote_control_not_started"), nil },
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newRig(keepalive.ModePing)
+			r.open(t)
+			r.state.set(arrivedAt(1.5, 0))
+			starts := 0
+			r.client.handler = func(n int, c call) (*api.MessageRequest, error) {
+				if c.name == "start-session" {
+					if starts++; starts < motion.RestartAttempts {
+						return failure()
+					}
+				}
+				return moveReply(0, 0), nil
+			}
+			o := r.finish(t, r.startTrip(tripBody()))
+			require.NoError(t, o.err)
+			pose, _ := replyPose(t, o.reply)
+			require.Equal(t, []float32{1.5, 0}, pose.Point.Coordinates)
+			require.Equal(t, motion.RestartAttempts, restartCalls(r.client.names()))
+			select {
+			case f := <-r.fatals:
+				t.Fatalf("the hold ended: %v", f)
+			default:
+			}
+		})
+	}
+}
+
+func TestGoToPointRestartEndsTheHoldAfterEveryTryTimesOut(t *testing.T) {
+	r := newRig(keepalive.ModePing)
+	r.open(t)
+	r.state.set(arrivedAt(1.5, 0))
+	r.client.handler = func(n int, c call) (*api.MessageRequest, error) {
+		if c.name == "start-session" {
+			return failedReply(string(api.ErrorCodePROVIDERTIMEOUT)), nil
+		}
+		return moveReply(0, 0), nil
+	}
+	o := r.finish(t, r.startTrip(tripBody()))
+	requireCode(t, o.err, motion.CodeGoToPointSessionLost)
+	require.Equal(t, motion.RestartAttempts, restartCalls(r.client.names()))
+	f := <-r.fatals
+	require.Equal(t, holds.ReasonEndpointError, f.reason)
 }
 
 func TestGoToPointEndSessionFailureLeavesTheSessionAlone(t *testing.T) {

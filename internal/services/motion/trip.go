@@ -189,14 +189,24 @@ func (s *session) stopTrip() {
 	_, _ = s.svc.client.SendSync(ctx, s.endpoint, api.INTERFACE_PORTOS_ROBOTIC_VACUUM_CLEANER, api.INTERFACE_PORTOS_ROBOTIC_VACUUM_CLEANER_STOP, map[string]any{})
 }
 
-// restartSession starts the remote-control session again after a trip. When
-// Port OS refuses, the hold ends with a fatal reason, like any session failure.
+// restartSession starts the remote-control session again after a trip. The
+// robot stands off its dock, so a start that timed out or got no answer is
+// sent again, up to RestartAttempts tries. When Port OS refuses, or every try
+// fails, the hold ends with a fatal reason, like any session failure.
 func (s *session) restartSession() error {
-	ctx, cancel := context.WithTimeout(context.Background(), tripCleanupTimeout)
-	defer cancel()
 	start := api.INTERFACE_PORTOS_REMOTE_CONTROL_START_SESSION
-	reply, err := s.svc.client.SendSync(ctx, s.endpoint, api.INTERFACE_PORTOS_REMOTE_CONTROL, start, map[string]any{})
-	if err := replyError(start, reply, err); err != nil {
+	var err error
+	for try := 1; ; try++ {
+		reply, sendErr := s.startOnce()
+		err = replyError(start, reply, sendErr)
+		if err == nil || try == RestartAttempts || !startWorthRetrying(reply, sendErr) {
+			break
+		}
+		if s.sleep(context.Background(), RestartRetryPause) != nil {
+			break // a close is waiting: it docks the robot
+		}
+	}
+	if err != nil {
 		detail := "the remote-control session could not be started after the go-to-point trip: " + err.Error()
 		reason := holds.ReasonEndpointError
 		if portos.IsUnauthorized(err) {
@@ -211,6 +221,20 @@ func (s *session) restartSession() error {
 	s.mu.Unlock()
 	s.arm()
 	return nil
+}
+
+// startOnce sends one start-session on its own budget.
+func (s *session) startOnce() (*api.MessageRequest, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), tripCleanupTimeout)
+	defer cancel()
+	return s.svc.client.SendSync(ctx, s.endpoint, api.INTERFACE_PORTOS_REMOTE_CONTROL, api.INTERFACE_PORTOS_REMOTE_CONTROL_START_SESSION, map[string]any{})
+}
+
+// startWorthRetrying reports whether a failed start-session after a trip may
+// succeed when sent again: the provider timed out, no answer came back, or the
+// robot was still moving when the wait ended.
+func startWorthRetrying(reply *api.MessageRequest, err error) bool {
+	return startMayHaveLanded(reply, err) || portos.HasCode(reply, providerNotStarted)
 }
 
 // readPose reads the pose once after the session is back, or nil when the robot reports none.
