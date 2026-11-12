@@ -419,10 +419,12 @@ class Robot:
         One call: the host ends the remote-control session, the robot plans and drives its own
         route (it does not clean), the host waits for it to stop and starts the session again, so
         the hold is live for the last metre. The robot stops within a few centimetres of the point,
-        not always on it; finish with drive_to or turn_to. frame is the pose's relativeToGroupRouteId
-        (the robot's own when empty). A trip that fails or takes over 180 seconds raises NotCarriedOut
+        not always on it; finish with drive_to or turn_to. frame is the pose's relativeToGroupRouteId;
+        when empty it is the frame of the newest pose this Robot has seen, else the host reads the
+        robot's own (a live read that can fail while Roborock answers slowly). A trip that fails or takes over 180 seconds raises NotCarriedOut
         (the robot is told to stop; .pose is where it is), and a refusal (a point off the map, another
         frame) raises RobotError with the reason."""
+        frame = frame or (self.last_pose.frame if self.last_pose is not None else "")
         args = ["message", "go-to-point", self.endpoint] + (["--frame", frame] if frame else [])
         args += ["--", repr(float(x)), repr(float(y))]
         try:

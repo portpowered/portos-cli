@@ -234,6 +234,23 @@ func TestAnOpenTheProviderTimedOutSendsTheRobotHome(t *testing.T) {
 	require.NoError(t, r.svc.Open(context.Background(), holdID, endpointID), "the failed open left nothing registered")
 }
 
+// deadlineReply is a start-session Port OS stopped waiting for at its request
+// deadline: the dispatch ended TIMED_OUT and its error body is a generic INTERNAL.
+func deadlineReply() *api.MessageRequest {
+	reply := failedReply("")
+	reply.Errors[0].Code = api.TIMEDOUT
+	reply.Errors[0].Error = &api.Error{Code: api.ErrorCodeINTERNAL, Message: "internal error"}
+	return reply
+}
+
+func TestAnOpenCutOffAtTheRequestDeadlineSendsTheRobotHome(t *testing.T) {
+	r := newRig(keepalive.ModePing)
+	r.client.handler = failStart(deadlineReply(), nil)
+	err := r.svc.Open(context.Background(), holdID, endpointID)
+	require.ErrorContains(t, err, "TIMED_OUT")
+	require.Equal(t, []string{"start-session", "end-session", "return-to-dock"}, r.client.names())
+}
+
 func TestAnOpenWithNoReplySendsTheRobotHome(t *testing.T) {
 	r := newRig(keepalive.ModePing)
 	r.client.handler = failStart(nil, context.DeadlineExceeded)

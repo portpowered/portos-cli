@@ -301,8 +301,9 @@ func TestGoToPointRestartRidesOutASlowProvider(t *testing.T) {
 		"provider timeout": func() (*api.MessageRequest, error) {
 			return failedReply(string(api.ErrorCodePROVIDERTIMEOUT)), nil
 		},
-		"no answer":    func() (*api.MessageRequest, error) { return nil, context.DeadlineExceeded },
-		"still moving": func() (*api.MessageRequest, error) { return failedReply("remote_control_not_started"), nil },
+		"no answer":        func() (*api.MessageRequest, error) { return nil, context.DeadlineExceeded },
+		"still moving":     func() (*api.MessageRequest, error) { return failedReply("remote_control_not_started"), nil },
+		"request deadline": func() (*api.MessageRequest, error) { return deadlineReply(), nil },
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := newRig(keepalive.ModePing)

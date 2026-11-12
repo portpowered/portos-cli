@@ -228,6 +228,15 @@ class GoingTo(unittest.TestCase):
         self.robot(port).go_to(1, 1)
         self.assertNotIn("--frame", port.trips[0])
 
+    def test_go_to_takes_the_frame_of_the_newest_pose_it_has_seen(self):
+        port = FakePort()
+        robot = self.robot(port)
+        robot.pose()
+        robot.go_to(1, 1)
+        at = port.trips[0].index("--frame")
+        self.assertEqual(port.trips[0][at + 1], robot.where().frame)
+        self.assertTrue(robot.where().frame)
+
     def test_a_failed_trip_raises_with_the_pose_where_the_robot_is(self):
         port = FakePort(x=0.5, y=0.5)
         port.trip_error = NotCarriedOut(10, "the robot was still travelling after 3m0s; it was told to stop")

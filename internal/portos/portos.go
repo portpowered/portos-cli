@@ -79,6 +79,21 @@ func ProviderCodes(reply *api.MessageRequest) []string {
 	return codes
 }
 
+// OutcomeUnknown reports whether a dispatch on the reply ended TIMED_OUT: Port
+// OS stopped waiting at the request deadline, so the device may still have acted.
+// Its error body is then often a generic INTERNAL, which says nothing about the device.
+func OutcomeUnknown(reply *api.MessageRequest) bool {
+	if reply == nil {
+		return false
+	}
+	for _, failure := range reply.Errors {
+		if failure.Code == api.TIMEDOUT {
+			return true
+		}
+	}
+	return false
+}
+
 // HasCode reports whether the reply recorded a failure with the given provider
 // code or Port OS error code.
 func HasCode(reply *api.MessageRequest, code string) bool {

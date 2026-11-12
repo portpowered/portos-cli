@@ -208,7 +208,11 @@ func replyError(name string, reply *api.MessageRequest, err error) error {
 		return fmt.Errorf("%s: no reply", name)
 	}
 	if reply.Status != api.SUCCEEDED {
-		return fmt.Errorf("%s: request %s ended %s %s", name, reply.Id, reply.Status, strings.Join(portos.ProviderCodes(reply), " "))
+		codes := portos.ProviderCodes(reply)
+		if portos.OutcomeUnknown(reply) {
+			codes = append(codes, string(api.TIMEDOUT))
+		}
+		return fmt.Errorf("%s: request %s ended %s %s", name, reply.Id, reply.Status, strings.Join(codes, " "))
 	}
 	return nil
 }
@@ -622,13 +626,14 @@ func (s *session) shutdown(ctx context.Context) error {
 }
 
 // startMayHaveLanded reports whether a failed start-session may still have
-// put the robot in remote control: no reply came back, or the provider timed
-// out. An auth rejection never reached the robot.
+// put the robot in remote control: no reply came back, the provider timed out,
+// or Port OS ended the dispatch TIMED_OUT at the request deadline. An auth
+// rejection never reached the robot.
 func startMayHaveLanded(reply *api.MessageRequest, err error) bool {
 	if err != nil {
 		return !portos.IsUnauthorized(err)
 	}
-	return reply == nil || portos.HasCode(reply, string(api.ErrorCodePROVIDERTIMEOUT))
+	return reply == nil || portos.HasCode(reply, string(api.ErrorCodePROVIDERTIMEOUT)) || portos.OutcomeUnknown(reply)
 }
 
 // endAndSendHome sends end-session, then return-to-dock, even if the caller
