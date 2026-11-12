@@ -74,6 +74,11 @@ type MessagesClient interface {
 	// Send sends a message to a recipient
 	// request: The message request containing the message, target, and optional response type
 	Send(ctx context.Context, request *api.CreateMessageRequest, idempotencyKeys ...string) (*api.MessageRequest, error)
+
+	// Hold keeps GET /message-requests/{id}/hold open for the shared session subscriber the
+	// message request attached. It returns when the attachment ends, with the reason; a
+	// dropped connection or a 404 (no live shared subscriber) is an error.
+	Hold(ctx context.Context, requestID string) (*api.MessageRequestHoldEnd, error)
 }
 
 // RulesClient defines the interface for access control rule operations

@@ -22,6 +22,10 @@ func (f *fakeMessages) Send(_ context.Context, request *api.CreateMessageRequest
 	return f.response, nil
 }
 
+func (f *fakeMessages) Hold(context.Context, string) (*api.MessageRequestHoldEnd, error) {
+	return nil, errors.New("no session hold in this fake")
+}
+
 type messageTestClient struct {
 	apiclient.Client
 	messages *fakeMessages

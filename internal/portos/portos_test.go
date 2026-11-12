@@ -25,6 +25,10 @@ func (f *fakeMessages) Send(_ context.Context, r *api.CreateMessageRequest, keys
 	return f.reply, f.err
 }
 
+func (f *fakeMessages) Hold(context.Context, string) (*api.MessageRequestHoldEnd, error) {
+	return nil, errors.New("no session hold in this fake")
+}
+
 func TestSendSyncBuildsSyncEndpointMessageWithFreshKey(t *testing.T) {
 	reply := &api.MessageRequest{Id: "r"}
 	fake := &fakeMessages{reply: reply}

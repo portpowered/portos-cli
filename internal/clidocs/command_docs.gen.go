@@ -657,7 +657,7 @@ var Commands = map[string]CommandDoc{
 			"play-audio",
 		},
 		Summary:            "Play an audio file on an endpoint",
-		Description:        "Play an audio file on an endpoint's speaker. Under a camera hold (session hold --camera, with the lease) the clip goes through the held camera session - the CLI converts it to Ogg/Opus with ffmpeg when it is not Ogg already, and the reply comes once it starts. Otherwise it is the media-player/play-audio message and Port OS converts the audio. Clips are at most 60 seconds on a robot; a second clip while one plays is refused as busy (exit 12). With --json the result gives the clip's length in seconds when it is Ogg/Opus.",
+		Description:        "Play an audio file on an endpoint's speaker. Under a camera hold (session hold --camera, with the lease) the clip goes through the held camera session - the CLI converts it to Ogg/Opus with ffmpeg when it is not Ogg already, and the reply comes once it starts. Otherwise it is the media-player/play-audio message and Port OS converts the audio. Clips are at most 60 seconds on a robot; a second clip while one plays is refused as busy (exit 12). Under a shared camera hold (session hold --camera --shared) there is no talkback and play-audio is refused as shared_hold_no_talkback (exit 12). With --json the result gives the clip's length in seconds when it is Ogg/Opus.",
 		Category:           "messages",
 		CanonicalReference: "api/cli/commands.yaml",
 		Arguments: []ArgumentDoc{
@@ -871,6 +871,40 @@ var Commands = map[string]CommandDoc{
 			{
 				Description: "Capture a snapshot from an endpoint alias.",
 				Invocation:  "port message snapshot ep/a1b2c3d4 --output ./frame.jpg",
+				Output:      "",
+			},
+		},
+	},
+	"port.message.step-ptz": {
+		ID: "port.message.step-ptz",
+		Path: []string{
+			"port",
+			"message",
+			"step-ptz",
+		},
+		Summary:            "Step a held camera left, right, up or down",
+		Description:        "Move a camera one pan or tilt step in the session of a camera hold (the lease from session hold --camera). The host sends the step in the hold's own camera session and fills the session ID, so there is nothing to look up. It works under a single-peer hold and under a shared one (session hold --camera --shared). Without a lease and a live camera hold the step is refused as hold_lease_required (exit 13), because a step needs the caller's own camera session. Take a snapshot after the step to see the new view.",
+		Category:           "messages",
+		CanonicalReference: "api/cli/commands.yaml",
+		Arguments: []ArgumentDoc{
+			{
+				Name:        "endpoint-id",
+				Description: "Camera endpoint ID or local endpoint alias.",
+				Required:    true,
+				Variadic:    false,
+			},
+			{
+				Name:        "direction",
+				Description: "LEFT, RIGHT, UP or DOWN.",
+				Required:    true,
+				Variadic:    false,
+			},
+		},
+		Flags: []FlagDoc{},
+		Examples: []ExampleDoc{
+			{
+				Description: "Step the held camera left, then look.",
+				Invocation:  "port message step-ptz ep/a1b2c3d4 LEFT --lease \"$PORTOS_LEASE\" && port message snapshot ep/a1b2c3d4 view.jpg --lease \"$PORTOS_LEASE\"",
 				Output:      "",
 			},
 		},
@@ -1393,7 +1427,7 @@ var Commands = map[string]CommandDoc{
 			"hold",
 		},
 		Summary:            "Open a hold on an endpoint and print its lease",
-		Description:        "Start the session host if needed, open a hold on the endpoint and print the hold ID, lease, endpoint, kinds and pose. With --camera the host keeps the camera session open, so snapshots under the lease come from it in about a second; another viewer opening the camera takes it away. The host ends the hold, sending the robot home, when no command arrives for the dead-man period, when the machine sleeps, or when the robot leaves remote control.",
+		Description:        "Start the session host if needed, open a hold on the endpoint and print the hold ID, lease, endpoint, kinds and pose. With --camera the host keeps the camera session open, so snapshots under the lease come from it in about a second; another viewer opening the camera takes it away, unless the hold is --shared, which attaches next to the other viewers. The host ends the hold, sending the robot home, when no command arrives for the dead-man period, when the machine sleeps, or when the robot leaves remote control.",
 		Category:           "session",
 		CanonicalReference: "api/cli/commands.yaml",
 		Arguments: []ArgumentDoc{
@@ -1422,6 +1456,14 @@ var Commands = map[string]CommandDoc{
 				Description: "Hold the endpoint's camera session, so snapshots and play-audio under the lease skip opening a new one.",
 			},
 			{
+				Name:        "shared",
+				Shorthand:   "",
+				Type:        "bool",
+				Default:     "false",
+				Required:    false,
+				Description: "With --camera, attach to the endpoint's shared session, so a call and this hold watch the one camera. The hold is receive-only with no talkback (play-audio is refused as shared_hold_no_talkback, exit 12), snapshots, record and step-ptz work under the lease, and the hold ends as session_expired when the session's time runs out (about an hour from the first attach).",
+			},
+			{
 				Name:        "dead-man",
 				Shorthand:   "",
 				Type:        "string",
@@ -1444,6 +1486,11 @@ var Commands = map[string]CommandDoc{
 			{
 				Description: "Move under the hold with its lease.",
 				Invocation:  "port message move ep/a1b2c3d4 \"forward 1m\" --lease <lease>",
+				Output:      "",
+			},
+			{
+				Description: "Watch a Ring camera next to a live call, then step it and look.",
+				Invocation:  "port session hold ep/a1b2c3d4 --camera --shared",
 				Output:      "",
 			},
 		},

@@ -79,6 +79,14 @@ Agent Skill for agents that drive robots this way: the rules, a stdlib-only
 Python helper that corrects moves from the measured replies, a map renderer and
 two example tricks.
 
+## Look through a camera next to a call
+
+`port session hold <endpoint-id> --camera --shared` attaches to a Ring camera
+that a call already uses, instead of taking it away. Snapshots, recordings and
+`port message step-ptz <endpoint-id> LEFT|RIGHT|UP|DOWN` then work under the
+printed lease. [`skills/camera-look-around`](skills/camera-look-around/SKILL.md)
+is an Agent Skill for agents that look around this way.
+
 ## Build and test
 
 ```bash

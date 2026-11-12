@@ -2,11 +2,13 @@ package hostservices
 
 import (
 	"context"
+	"encoding/base64"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/portpowered/portos-cli/internal/api"
+	apiclient "github.com/portpowered/portos-cli/internal/api_client"
 	"github.com/portpowered/portos-cli/internal/clock"
 	"github.com/portpowered/portos-cli/internal/exitcode"
 	"github.com/portpowered/portos-cli/internal/host"
@@ -28,6 +30,11 @@ func (s *stubStream) Play(context.Context, []byte) (time.Duration, error) { retu
 func (s *stubStream) Record(context.Context, time.Duration) (camera.Clip, error) {
 	return camera.Clip{Path: "held.h264", Codec: "H264", FrameRate: 15}, nil
 }
+func (s *stubStream) StepPTZ(context.Context, map[string]any) (*api.MessageRequest, error) {
+	return &api.MessageRequest{Id: "step", Status: api.SUCCEEDED}, nil
+}
+func (s *stubStream) ExpiresAt() time.Time        { return time.Time{} }
+func (s *stubStream) EndReason() string           { return "" }
 func (s *stubStream) Done() <-chan struct{}       { return s.done }
 func (s *stubStream) Close(context.Context) error { s.end(); return nil }
 func (s *stubStream) end()                        { s.once.Do(func() { close(s.done) }) }
@@ -35,6 +42,7 @@ func (s *stubStream) end()                        { s.once.Do(func() { close(s.d
 type stubOpener struct {
 	mu      sync.Mutex
 	streams []*stubStream
+	shared  int
 }
 
 func (o *stubOpener) Open(context.Context, string, time.Duration) (camera.Stream, error) {
@@ -43,6 +51,19 @@ func (o *stubOpener) Open(context.Context, string, time.Duration) (camera.Stream
 	s := &stubStream{done: make(chan struct{})}
 	o.streams = append(o.streams, s)
 	return s, nil
+}
+
+func (o *stubOpener) OpenShared(ctx context.Context, endpointID string, lifetime time.Duration) (camera.Stream, error) {
+	o.mu.Lock()
+	o.shared++
+	o.mu.Unlock()
+	return o.Open(ctx, endpointID, lifetime)
+}
+
+func (o *stubOpener) sharedOpens() int {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.shared
 }
 
 func (o *stubOpener) last() *stubStream {
@@ -133,4 +154,44 @@ func requireHostCode(t *testing.T, err error, code string) {
 	var coded *host.CodedError
 	require.ErrorAs(t, err, &coded)
 	require.Equal(t, code, coded.Code)
+}
+
+func TestASharedCameraHoldOpensSharedStepsAndRefusesTalkback(t *testing.T) {
+	opener := &stubOpener{}
+	built := New(Options{Clock: clock.NewFake(time.Unix(1000, 0)), Portos: okPortos{}, Keepalive: keepalive.Default, Camera: opener})
+	opened, err := built.Services.Holds.Open(t.Context(), host.OpenHoldRequest{EndpointID: heldEndpoint, Kinds: []string{"camera"}, Shared: true})
+	require.NoError(t, err)
+	require.Equal(t, 1, opener.sharedOpens())
+	require.NotNil(t, opened.Camera)
+	require.True(t, opened.Camera.Shared)
+
+	step := &api.CreateMessageRequest{
+		Target:  api.CreateMessageTarget{Type: api.EndpointTarget, Id: heldEndpoint},
+		Message: api.Message{Header: &api.MessageHeader{Namespace: api.INTERFACE_PORTOS_CAMERA, Name: api.INTERFACE_PORTOS_CAMERA_STEP_PTZ, Version: "1.0"}, Body: map[string]any{"direction": "UP"}},
+	}
+	reply, err := built.Services.Messages.Dispatch(t.Context(), opened.Lease, step)
+	require.NoError(t, err)
+	require.Equal(t, api.SUCCEEDED, reply.Status)
+	reply, err = built.Services.Messages.Dispatch(t.Context(), "", step)
+	require.NoError(t, err)
+	require.Equal(t, holds.CodeHoldLeaseRequired, exitcode.ProviderCode(reply))
+
+	clip := base64.StdEncoding.EncodeToString([]byte("OggS"))
+	play := &api.CreateMessageRequest{
+		Target: api.CreateMessageTarget{Type: api.EndpointTarget, Id: heldEndpoint},
+		Message: api.Message{
+			Header: &api.MessageHeader{Namespace: api.INTERFACE_PORTOS_MEDIA_PLAYER, Name: api.INTERFACE_PORTOS_MEDIA_PLAYER_PLAY_AUDIO, Version: "1.0"},
+			Body:   map[string]any{"audio": map[string]any{"data": clip, "mimeType": "audio/ogg"}},
+		},
+	}
+	reply, err = built.Services.Messages.Dispatch(t.Context(), opened.Lease, play)
+	require.NoError(t, err)
+	require.Equal(t, holds.CodeSharedHoldNoTalkback, exitcode.ProviderCode(reply))
+	require.Equal(t, exitcode.ExitBusy, exitcode.Code(&apiclient.MessageRequestFailed{Request: reply}))
+}
+
+func TestASharedHoldNeedsTheCameraKind(t *testing.T) {
+	built := New(Options{Clock: clock.NewFake(time.Unix(1000, 0)), Portos: okPortos{}, Keepalive: keepalive.Default, Camera: &stubOpener{}})
+	_, err := built.Services.Holds.Open(t.Context(), host.OpenHoldRequest{EndpointID: heldEndpoint, Kinds: []string{"motion"}, Shared: true})
+	requireHostCode(t, err, host.CodeInvalidRequest)
 }

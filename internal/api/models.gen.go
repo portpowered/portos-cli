@@ -1267,6 +1267,13 @@ const (
 	UNREACHABLE MessageRequestErrorCode = "UNREACHABLE"
 )
 
+// Defines values for MessageRequestHoldEndReason.
+const (
+	DETACHED      MessageRequestHoldEndReason = "DETACHED"
+	EXPIRED       MessageRequestHoldEndReason = "EXPIRED"
+	SESSIONCLOSED MessageRequestHoldEndReason = "SESSION_CLOSED"
+)
+
 // Defines values for MessageRequestStatus.
 const (
 	FAILED             MessageRequestStatus = "FAILED"
@@ -1722,6 +1729,18 @@ const (
 const (
 	FULLOFFER RtcSessionInterfaceConfigurationIceMode = "FULL_OFFER"
 	TRICKLE   RtcSessionInterfaceConfigurationIceMode = "TRICKLE"
+)
+
+// Defines values for RtcSessionInterfaceConfigurationSessionModes.
+const (
+	RtcSessionInterfaceConfigurationSessionModesSHARED     RtcSessionInterfaceConfigurationSessionModes = "SHARED"
+	RtcSessionInterfaceConfigurationSessionModesSINGLEPEER RtcSessionInterfaceConfigurationSessionModes = "SINGLE_PEER"
+)
+
+// Defines values for RtcSessionInterfaceInitiateSessionWithOfferMessageSessionMode.
+const (
+	RtcSessionInterfaceInitiateSessionWithOfferMessageSessionModeSHARED     RtcSessionInterfaceInitiateSessionWithOfferMessageSessionMode = "SHARED"
+	RtcSessionInterfaceInitiateSessionWithOfferMessageSessionModeSINGLEPEER RtcSessionInterfaceInitiateSessionWithOfferMessageSessionMode = "SINGLE_PEER"
 )
 
 // Defines values for RtcSessionRoborockPinAuthorizationType.
@@ -9425,6 +9444,15 @@ type MessageRequestError struct {
 // MessageRequestErrorCode defines model for MessageRequestError.Code.
 type MessageRequestErrorCode string
 
+// MessageRequestHoldEnd Why a session hold ended.
+type MessageRequestHoldEnd struct {
+	// Reason DETACHED: the subscriber left (disconnect-session, its peer went away, or no hold was open for 30 seconds). SESSION_CLOSED: the shared session ended for every subscriber. EXPIRED: the subscriber reached its session duration.
+	Reason MessageRequestHoldEndReason `json:"reason"`
+}
+
+// MessageRequestHoldEndReason DETACHED: the subscriber left (disconnect-session, its peer went away, or no hold was open for 30 seconds). SESSION_CLOSED: the shared session ended for every subscriber. EXPIRED: the subscriber reached its session duration.
+type MessageRequestHoldEndReason string
+
 // MessageRequestResult defines model for MessageRequestResult.
 type MessageRequestResult struct {
 	// Message The message that was responded with when there was a unary message response, exactly one of the outbound capability messages. A synchronous send can return one; an acknowledgment with no message back leaves this empty. The header namespace, name and version select the variant and the body schema.
@@ -12613,6 +12641,9 @@ type RtcSessionAuthorizationRequirement struct {
 type RtcSessionInterfaceAnswerGeneratedForSessionMessage struct {
 	// Answer An RTC session answer
 	Answer RtcAnswer `json:"answer"`
+
+	// SessionExpiresAt When the session ends at the latest. Present for SHARED subscribers.
+	SessionExpiresAt *time.Time `json:"sessionExpiresAt,omitempty"`
 }
 
 // RtcSessionInterfaceAnswerGeneratedForSessionMessageEnvelope The `answer-generated-for-session` message (version 1.0) of the `port1/systems/zero/capability-interfaces/rtc-session` capability interface, as returned by an endpoint. The header identifies the message and selects the body schema.
@@ -12641,8 +12672,14 @@ type RtcSessionInterfaceConfiguration struct {
 	// IceServers Optional public STUN configuration passed to the browser's standard RTCIceServer interface. Omitted or empty means no ICE servers. Gathering starts only when a caller deliberately initiates a session. TURN and credentials are excluded.
 	IceServers *[]RtcIceServer `json:"iceServers,omitempty"`
 
+	// MaxSharedSubscribers Most subscribers a SHARED session holds at once. Present only when sessionModes lists SHARED.
+	MaxSharedSubscribers *int `json:"maxSharedSubscribers,omitempty"`
+
 	// MessageAuthorizationRequirements Per-message authorization requirements for RTC session messages.
 	MessageAuthorizationRequirements *[]RtcSessionMessageAuthorizationRequirement `json:"messageAuthorizationRequirements,omitempty"`
+
+	// SessionModes Session modes the endpoint accepts in initiate-session-with-offer. Omitted means SINGLE_PEER only. SHARED attaches the caller as one subscriber of a live session that several callers share.
+	SessionModes *[]RtcSessionInterfaceConfigurationSessionModes `json:"sessionModes,omitempty"`
 
 	// SupportedStreams Discoverable media streams in SDP offer order. Directions describe the endpoint; the browser reverses SENDONLY and RECVONLY. Omitted means a video SENDONLY stream.
 	SupportedStreams *[]RtcSessionSupportedStream `json:"supportedStreams,omitempty"`
@@ -12650,6 +12687,9 @@ type RtcSessionInterfaceConfiguration struct {
 
 // RtcSessionInterfaceConfigurationIceMode Whether the endpoint expects a full offer up front or supports trickle ICE.
 type RtcSessionInterfaceConfigurationIceMode string
+
+// RtcSessionInterfaceConfigurationSessionModes defines model for RtcSessionInterfaceConfiguration.SessionModes.
+type RtcSessionInterfaceConfigurationSessionModes string
 
 // RtcSessionInterfaceDisconnectSessionMessage Disconnect a real-time communication session by its session ID.
 type RtcSessionInterfaceDisconnectSessionMessage struct {
@@ -12684,10 +12724,16 @@ type RtcSessionInterfaceInitiateSessionWithOfferMessage struct {
 	// SessionDomain The logical RTC session domain requested by the caller.
 	SessionDomain string `json:"sessionDomain"`
 
-	// SessionDuration The duration of the session in seconds. If not provided, the default is 60 seconds. If provided, the session will be terminated after the duration has elapsed. To reestablish the session, the client must initiate a new session with a new offer.
+	// SessionDuration The duration of the session in seconds. If not provided, the default is 60 seconds for SINGLE_PEER and the shared session's remaining lifetime for SHARED. If provided, the session will be terminated after the duration has elapsed; a SHARED subscriber never outlives its shared session. To reestablish the session, the client must initiate a new session with a new offer.
 	SessionDuration *int   `json:"sessionDuration,omitempty"`
 	SessionId       string `json:"sessionId"`
+
+	// SessionMode SINGLE_PEER (the default) connects the caller's peer straight to the endpoint. SHARED attaches the caller as one subscriber of the endpoint's shared session, opening it when none is live; the route must list SHARED in its sessionModes. A SHARED subscriber keeps its session hold (GET /message-requests/{id}/hold) open while attached.
+	SessionMode *RtcSessionInterfaceInitiateSessionWithOfferMessageSessionMode `json:"sessionMode,omitempty"`
 }
+
+// RtcSessionInterfaceInitiateSessionWithOfferMessageSessionMode SINGLE_PEER (the default) connects the caller's peer straight to the endpoint. SHARED attaches the caller as one subscriber of the endpoint's shared session, opening it when none is live; the route must list SHARED in its sessionModes. A SHARED subscriber keeps its session hold (GET /message-requests/{id}/hold) open while attached.
+type RtcSessionInterfaceInitiateSessionWithOfferMessageSessionMode string
 
 // RtcSessionInterfaceInitiateSessionWithOfferMessageEnvelope The `initiate-session-with-offer` message (version 1.0) of the `port1/systems/zero/capability-interfaces/rtc-session` capability interface, as sent to an endpoint. The header identifies the message and selects the body schema.
 type RtcSessionInterfaceInitiateSessionWithOfferMessageEnvelope struct {

@@ -28,6 +28,10 @@ func (s *scriptedMessages) Send(_ context.Context, request *api.CreateMessageReq
 	return s.responses[len(s.sent)-1], nil
 }
 
+func (s *scriptedMessages) Hold(context.Context, string) (*api.MessageRequestHoldEnd, error) {
+	return nil, errors.New("no session hold in this fake")
+}
+
 type scriptedMessageClient struct {
 	apiclient.Client
 	messages *scriptedMessages

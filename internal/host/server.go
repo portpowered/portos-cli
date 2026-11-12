@@ -75,6 +75,10 @@ type CameraStatus struct {
 	Renewals    int        `json:"renewals"`
 	LastFrameAt *time.Time `json:"lastFrameAt,omitempty"`
 	LostReason  string     `json:"lostReason,omitempty"`
+	// Shared is true for a camera attached to a shared session; ExpiresAt is when that
+	// session ends, and the hold ends with it.
+	Shared    bool       `json:"shared,omitempty"`
+	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
 }
 
 // HoldStatus is the JSON shape of one hold. It never carries the lease.
@@ -103,6 +107,8 @@ type OpenHoldRequest struct {
 	EndpointID     string   `json:"endpointId"`
 	Kinds          []string `json:"kinds"`
 	DeadManSeconds int      `json:"deadManSeconds,omitempty"`
+	// Shared attaches the camera as one subscriber of the endpoint's shared session.
+	Shared bool `json:"shared,omitempty"`
 }
 
 // RecordRequest is the body of POST /recordings.

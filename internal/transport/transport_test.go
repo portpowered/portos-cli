@@ -42,6 +42,10 @@ func (f *fakeMessages) Send(context.Context, *api.CreateMessageRequest, ...strin
 	return &api.MessageRequest{Id: "cloud"}, nil
 }
 
+func (f *fakeMessages) Hold(context.Context, string) (*api.MessageRequestHoldEnd, error) {
+	return nil, errors.New("no session hold in this fake")
+}
+
 type fakeClient struct {
 	apiclient.Client
 	messages *fakeMessages
@@ -284,4 +288,28 @@ func TestRecordGoesThroughTheCameraHold(t *testing.T) {
 	require.NoError(t, err)
 	_, err = RecordHeld(t.Context(), sender, "ep/1", time.Second)
 	require.Equal(t, exitcode.ExitHold, exitcode.Code(err))
+}
+
+func TestResolverStepPTZUsesTheCameraHoldOnly(t *testing.T) {
+	cam := api.INTERFACE_PORTOS_CAMERA
+	host := &fakeHost{holds: []hostclient.Hold{{ID: "hold-1", EndpointID: "ep/1", Kinds: []string{"camera"}, State: "live"}}}
+	r, messages := newResolver("d", host, nil, "the-lease")
+	sender, err := r.For(t.Context(), "ep/1", cam, api.INTERFACE_PORTOS_CAMERA_STEP_PTZ)
+	require.NoError(t, err)
+	require.True(t, Held(sender), "step-ptz goes to the camera hold")
+	_, err = sender.Send(t.Context(), req(), "key")
+	require.NoError(t, err)
+	require.Equal(t, "the-lease", host.sent[0].lease)
+	require.Zero(t, messages.sent)
+
+	// Another camera message is not the hold's, so it keeps the cloud path.
+	other, err := r.For(t.Context(), "ep/1", cam, api.INTERFACE_PORTOS_CAMERA_GET_EVENT_IMAGE)
+	require.NoError(t, err)
+	require.False(t, Held(other))
+
+	// Without a lease a live camera hold still takes it, and the host answers hold_lease_required.
+	noLease, _ := newResolver("d", host, nil, "")
+	sender, err = noLease.For(t.Context(), "ep/1", cam, api.INTERFACE_PORTOS_CAMERA_STEP_PTZ)
+	require.NoError(t, err)
+	require.True(t, Held(sender))
 }

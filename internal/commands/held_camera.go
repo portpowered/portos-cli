@@ -33,6 +33,10 @@ type HeldCameraParams struct {
 	// Lifetime is the camera session length asked of Port OS; the caller renews before it ends.
 	Lifetime  time.Duration
 	RelayOnly bool
+	// Shared attaches as one subscriber of the endpoint's shared session: receive-only video
+	// and no talkback track. The camera keeps the message request's session hold open and
+	// ends when Port OS ends the attachment.
+	Shared bool
 }
 
 // HeldCamera is a camera peer the session host keeps open. It keeps the newest few seconds of
@@ -61,6 +65,8 @@ type HeldCamera struct {
 	closed     bool
 	playing    bool
 	taps       []*heldTap // recordings in progress
+	expiresAt  time.Time  // shared: when the session ends
+	endReason  string     // shared: why the session hold ended
 }
 
 // heldSegment is one file of video that starts at a keyframe.
@@ -72,8 +78,8 @@ type heldSegment struct {
 	frames  int
 }
 
-// HoldCamera opens a camera session with a receive-only video track and a send-only talkback
-// track, and returns once the first frame has arrived. Close ends the session.
+// HoldCamera opens a camera session with a receive-only video track and, unless it is shared, a
+// send-only talkback track, and returns once the first frame has arrived. Close ends the session.
 func (r *Recorder) HoldCamera(ctx context.Context, params HeldCameraParams) (*HeldCamera, error) {
 	if params.EndpointID == "" || params.SessionID == "" {
 		return nil, errors.New("endpoint ID and session ID are required")
@@ -118,13 +124,19 @@ func (r *Recorder) HoldCamera(ctx context.Context, params HeldCameraParams) (*He
 	if err != nil {
 		return nil, err
 	}
-	response, err := r.apiClient.Messages().Send(ctx, sessionRequest(params.EndpointID, params.SessionDomain, params.SessionID, params.Lifetime, offerSDP))
+	response, err := r.apiClient.Messages().Send(ctx, heldSessionRequest(params, offerSDP))
 	if err != nil {
 		return nil, fmt.Errorf("send initiate session: %w", err)
 	}
 	initiated = true
 	if err = r.applyAnswer(pc, response); err != nil {
 		return nil, err
+	}
+	if params.Shared {
+		if h.expiresAt, err = sessionExpiry(response); err != nil {
+			return nil, err
+		}
+		go h.runHold(response.Id)
 	}
 	timer := time.NewTimer(frameWaitTimeout)
 	defer timer.Stop()
@@ -148,8 +160,10 @@ func (h *HeldCamera) addTracks(started chan<- error) error {
 	if _, err := h.pc.AddTransceiverFromKind(webrtc.RTPCodecTypeVideo, webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionRecvonly}); err != nil {
 		return fmt.Errorf("add video transceiver: %w", err)
 	}
-	if err := h.addTalkback(); err != nil {
-		return err
+	if !h.params.Shared {
+		if err := h.addTalkback(); err != nil {
+			return err
+		}
 	}
 	h.pc.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
 		h.recorder.logger.Logger().Info("held camera connection state changed", zap.String("state", state.String()))

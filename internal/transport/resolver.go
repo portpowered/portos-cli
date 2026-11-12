@@ -122,9 +122,11 @@ func (r *resolver) noLiveHold(leased bool, endpointID string, ended bool) Sender
 
 // kindMessages are single messages a hold kind covers in a namespace the kind
 // does not cover as a whole: go-to-point is the motion hold's, while the rest
-// of the robotic-vacuum-cleaner messages (return-to-dock, say) take the cloud path.
+// of the robotic-vacuum-cleaner messages (return-to-dock, say) take the cloud path. The camera
+// hold likewise covers step-ptz alone, since a PTZ step needs the hold's own session.
 var kindMessages = map[string][]struct{ namespace, name string }{
 	"motion": {{api.INTERFACE_PORTOS_ROBOTIC_VACUUM_CLEANER, api.INTERFACE_PORTOS_ROBOTIC_VACUUM_CLEANER_GO_TO_POINT}},
+	"camera": {{api.INTERFACE_PORTOS_CAMERA, api.INTERFACE_PORTOS_CAMERA_STEP_PTZ}},
 }
 
 func coveredNamespace(namespace, name string) bool {

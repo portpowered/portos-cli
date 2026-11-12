@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/google/uuid"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/portpowered/portos-cli/internal/api"
@@ -56,6 +57,27 @@ func (m *MessagesClientImpl) Send(ctx context.Context, request *api.CreateMessag
 		return nil, fmt.Errorf("invalid message request response; recover identical input with --idempotency-key %q", key)
 	}
 	return &result, nil
+}
+
+// Hold waits on the message request's session hold until the subscriber's attachment ends.
+func (m *MessagesClientImpl) Hold(ctx context.Context, requestID string) (*api.MessageRequestHoldEnd, error) {
+	if requestID == "" {
+		return nil, NewSetupError("message request ID cannot be empty")
+	}
+	resp, err := m.client.doRequest(ctx, http.MethodGet, "/message-requests/"+url.PathEscape(requestID)+"/hold", nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	var result api.MessageRequestHoldEnd
+	if err := m.client.handleResponse(resp, &result); err != nil {
+		return nil, err
+	}
+	switch result.Reason {
+	case api.DETACHED, api.SESSIONCLOSED, api.EXPIRED:
+		return &result, nil
+	default:
+		return nil, fmt.Errorf("session hold ended with unknown reason %q", result.Reason)
+	}
 }
 
 func validMessageRequest(request api.MessageRequest) bool {

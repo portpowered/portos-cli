@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/portpowered/portos-cli/internal/api"
 	"github.com/portpowered/portos-cli/internal/clock"
 	"github.com/portpowered/portos-cli/internal/services/holds"
 )
@@ -24,6 +25,10 @@ const (
 	FreshFrame = time.Second
 	// renewTimeout bounds opening the replacement stream.
 	renewTimeout = time.Minute
+	// cappedSlack is how far short of a full Lifetime a shared session's expiry may fall
+	// (the time the first frame took) and still count as a fresh Lifetime. Further short
+	// means the session reached the shared upstream's own end.
+	cappedSlack = 30 * time.Second
 )
 
 // Errors a Stream's Play returns.
@@ -42,6 +47,14 @@ type Stream interface {
 	Play(ctx context.Context, ogg []byte) (time.Duration, error)
 	// Record copies the video into a file for the duration and returns it.
 	Record(ctx context.Context, duration time.Duration) (Clip, error)
+	// StepPTZ sends camera/step-ptz for the stream's own session and returns the reply
+	// from Port OS. Any sessionId in body is replaced.
+	StepPTZ(ctx context.Context, body map[string]any) (*api.MessageRequest, error)
+	// ExpiresAt is when a shared stream's session ends; zero for a single-peer stream.
+	ExpiresAt() time.Time
+	// EndReason says why a shared stream's session hold ended (DETACHED, SESSION_CLOSED,
+	// EXPIRED, or a local reason); empty while it runs and for a single-peer stream.
+	EndReason() string
 	// Done is closed when the stream stops for any reason.
 	Done() <-chan struct{}
 	Close(ctx context.Context) error
@@ -50,6 +63,9 @@ type Stream interface {
 // Opener opens a camera session on an endpoint for the given lifetime.
 type Opener interface {
 	Open(ctx context.Context, endpointID string, lifetime time.Duration) (Stream, error)
+	// OpenShared attaches to the endpoint's shared session as a receive-only subscriber
+	// with no talkback track, for at most the given lifetime.
+	OpenShared(ctx context.Context, endpointID string, lifetime time.Duration) (Stream, error)
 }
 
 // LostFunc is told when a hold's camera stops on its own: reason is
@@ -79,6 +95,10 @@ type Status struct {
 	Renewals   int        `json:"renewals"`
 	LastFrame  *time.Time `json:"lastFrameAt,omitempty"`
 	LostReason string     `json:"lostReason,omitempty"`
+	// Shared marks a stream attached to a shared session. ExpiresAt is when that session
+	// ends; the hold ends with session_expired then.
+	Shared    bool       `json:"shared,omitempty"`
+	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
 }
 
 // Service is the camera part of the session host.
@@ -90,6 +110,8 @@ type Service interface {
 	PlayAudio(ctx context.Context, holdID string, ogg []byte) (time.Duration, error)
 	// Record copies the held video into a file for the duration.
 	Record(ctx context.Context, holdID string, duration time.Duration) (Clip, error)
+	// StepPTZ sends camera/step-ptz with the hold's own session and returns the reply from Port OS.
+	StepPTZ(ctx context.Context, holdID string, body map[string]any) (*api.MessageRequest, error)
 	Status(holdID string) (Status, bool)
 }
 
@@ -99,6 +121,7 @@ type held struct {
 	timer      clock.Timer
 	status     Status
 	closing    bool
+	shared     bool
 }
 
 type service struct {
@@ -119,12 +142,13 @@ func New(opener Opener, c clock.Clock, lost LostFunc) Service {
 }
 
 func (s *service) Open(ctx context.Context, holdID, endpointID string) error {
-	stream, err := s.opener.Open(ctx, endpointID, Lifetime)
+	shared := holds.IsShared(ctx)
+	stream, err := s.openStream(ctx, endpointID, shared)
 	if err != nil {
 		return err
 	}
 	now := s.clock.Now()
-	h := &held{endpointID: endpointID, stream: stream, status: Status{Live: true, OpenedAt: now, RenewsAt: now.Add(Lifetime - renewBefore)}}
+	h := &held{endpointID: endpointID, stream: stream, shared: shared, status: Status{Live: true, OpenedAt: now, Shared: shared}}
 	s.mu.Lock()
 	if old := s.holds[holdID]; old != nil {
 		s.mu.Unlock()
@@ -132,10 +156,53 @@ func (s *service) Open(ctx context.Context, holdID, endpointID string) error {
 		return fmt.Errorf("camera: hold %s already has a camera", holdID)
 	}
 	s.holds[holdID] = h
-	h.timer = s.clock.AfterFunc(Lifetime-renewBefore, func() { s.renew(holdID) })
+	s.armLocked(holdID, h, now)
 	s.mu.Unlock()
 	go s.watch(holdID, stream)
 	return nil
+}
+
+func (s *service) openStream(ctx context.Context, endpointID string, shared bool) (Stream, error) {
+	if shared {
+		return s.opener.OpenShared(ctx, endpointID, Lifetime)
+	}
+	return s.opener.Open(ctx, endpointID, Lifetime)
+}
+
+// armLocked schedules the hold's next camera event for the stream it holds now. A single-peer
+// stream is renewed renewBefore its Lifetime runs out. A shared stream is renewed the same way
+// while its session outlasts the renewal; once its expiry falls short of a full Lifetime the
+// session is at the shared upstream's end, so nothing can replace it and the hold ends with
+// session_expired at that time.
+func (s *service) armLocked(holdID string, h *held, now time.Time) {
+	renewIn := Lifetime - renewBefore
+	h.status.RenewsAt = now.Add(renewIn)
+	if h.shared {
+		expires := h.stream.ExpiresAt()
+		h.status.ExpiresAt = &expires
+		if expires.Before(now.Add(Lifetime - cappedSlack)) {
+			h.status.RenewsAt = time.Time{}
+			h.timer = s.clock.AfterFunc(max(expires.Sub(now), 0), func() { s.expire(holdID) })
+			return
+		}
+	}
+	h.timer = s.clock.AfterFunc(renewIn, func() { s.renew(holdID) })
+}
+
+// expire ends a shared camera at its session's expiry.
+func (s *service) expire(holdID string) {
+	s.mu.Lock()
+	h := s.holds[holdID]
+	if h == nil || h.closing || !h.status.Live {
+		s.mu.Unlock()
+		return
+	}
+	h.status.Live = false
+	h.status.LostReason = string(holds.ReasonSessionExpired)
+	stream := h.stream
+	s.mu.Unlock()
+	_ = stream.Close(context.Background())
+	s.lost(holdID, holds.ReasonSessionExpired, "the shared camera session reached its expiry and is not renewed")
 }
 
 // watch reports a stream that stopped while it was still the hold's stream.
@@ -147,12 +214,26 @@ func (s *service) watch(holdID string, stream Stream) {
 		s.mu.Unlock()
 		return
 	}
+	reason, detail := endOf(stream)
 	h.status.Live = false
-	h.status.LostReason = string(holds.ReasonPreempted)
+	h.status.LostReason = string(reason)
 	h.timer.Stop()
 	s.mu.Unlock()
 	_ = stream.Close(context.Background())
-	s.lost(holdID, holds.ReasonPreempted, "the camera stream was closed by the far side; another viewer may have opened the camera")
+	s.lost(holdID, reason, detail)
+}
+
+// endOf says why a stream that stopped on its own did. A shared stream knows the reason its
+// session hold ended; an EXPIRED one is the session's expiry.
+func endOf(stream Stream) (holds.Reason, string) {
+	switch ended := stream.EndReason(); ended {
+	case "":
+		return holds.ReasonPreempted, "the camera stream was closed by the far side; another viewer may have opened the camera"
+	case string(api.EXPIRED):
+		return holds.ReasonSessionExpired, "the shared camera session reached its expiry"
+	default:
+		return holds.ReasonPreempted, "the shared camera session ended (" + ended + ")"
+	}
 }
 
 // renew opens a replacement stream before the current session ends, then
@@ -164,12 +245,12 @@ func (s *service) renew(holdID string) {
 		s.mu.Unlock()
 		return
 	}
-	endpointID := h.endpointID
+	endpointID, shared := h.endpointID, h.shared
 	s.mu.Unlock()
 
 	ctx, cancel := context.WithTimeout(context.Background(), renewTimeout)
 	defer cancel()
-	stream, err := s.opener.Open(ctx, endpointID, Lifetime)
+	stream, err := s.openStream(ctx, endpointID, shared)
 
 	s.mu.Lock()
 	h = s.holds[holdID]
@@ -193,8 +274,7 @@ func (s *service) renew(holdID string) {
 	h.stream = stream
 	now := s.clock.Now()
 	h.status.Renewals++
-	h.status.RenewsAt = now.Add(Lifetime - renewBefore)
-	h.timer = s.clock.AfterFunc(Lifetime-renewBefore, func() { s.renew(holdID) })
+	s.armLocked(holdID, h, now)
 	s.mu.Unlock()
 	go s.watch(holdID, stream)
 	_ = old.Close(ctx)
@@ -233,6 +313,9 @@ func (s *service) liveStream(holdID string) (Stream, error) {
 }
 
 func (s *service) PlayAudio(ctx context.Context, holdID string, ogg []byte) (time.Duration, error) {
+	if s.isShared(holdID) {
+		return 0, &holds.Error{Code: holds.CodeSharedHoldNoTalkback, Message: "a shared camera hold has no talkback track because a call owns the speaker; hold the camera without --shared to play audio"}
+	}
 	stream, err := s.liveStream(holdID)
 	if err != nil {
 		return 0, err
@@ -250,6 +333,28 @@ func (s *service) PlayAudio(ctx context.Context, holdID string, ogg []byte) (tim
 	default:
 		return 0, unavailable("play on the held camera: " + err.Error())
 	}
+}
+
+func (s *service) isShared(holdID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	h := s.holds[holdID]
+	return h != nil && h.shared
+}
+
+func (s *service) StepPTZ(ctx context.Context, holdID string, body map[string]any) (*api.MessageRequest, error) {
+	stream, err := s.liveStream(holdID)
+	if err != nil {
+		return nil, err
+	}
+	reply, err := stream.StepPTZ(ctx, body)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, unavailable("step the held camera: " + err.Error())
+	}
+	return reply, nil
 }
 
 func (s *service) Record(ctx context.Context, holdID string, duration time.Duration) (Clip, error) {

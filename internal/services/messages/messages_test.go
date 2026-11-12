@@ -61,11 +61,13 @@ func request(name string) *api.CreateMessageRequest {
 }
 
 type fakeSnapshots struct {
-	holdID  string
-	jpeg    []byte
-	err     error
-	played  []byte
-	playErr error
+	holdID   string
+	jpeg     []byte
+	err      error
+	played   []byte
+	playErr  error
+	stepBody map[string]any
+	stepErr  error
 }
 
 func (f *fakeSnapshots) Snapshot(_ context.Context, holdID string) ([]byte, time.Time, error) {
@@ -80,6 +82,12 @@ func (f *fakeSnapshots) PlayAudio(_ context.Context, holdID string, ogg []byte) 
 	}
 	f.played = ogg
 	return time.Second, nil
+}
+
+func (f *fakeSnapshots) StepPTZ(_ context.Context, holdID string, body map[string]any) (*api.MessageRequest, error) {
+	f.holdID = holdID
+	f.stepBody = body
+	return &api.MessageRequest{Id: "stepped", Status: api.SUCCEEDED}, f.stepErr
 }
 
 func newService(auth *fakeAuth, mover *fakeMover) Service {
@@ -314,4 +322,47 @@ func TestDispatchOtherVacuumMessagesAreNotServed(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, holds.CodeNotServedByHold, exitcode.ProviderCode(reply))
 	require.False(t, mover.tripped)
+}
+
+func stepRequest(name string) *api.CreateMessageRequest {
+	return &api.CreateMessageRequest{
+		Target: api.CreateMessageTarget{Type: api.EndpointTarget, Id: "ep/1"},
+		Message: api.Message{
+			Header: &api.MessageHeader{Namespace: api.INTERFACE_PORTOS_CAMERA, Name: name, Version: "1.0"},
+			Body:   map[string]any{"direction": "LEFT", "sessionId": "caller-made-up"},
+		},
+	}
+}
+
+func TestDispatchStepsTheHeldCameraInItsOwnSession(t *testing.T) {
+	auth := &fakeAuth{}
+	camera := &fakeSnapshots{}
+	reply, err := New(auth, &fakeMover{}, camera, clock.NewFake(time.Unix(1000, 0))).Dispatch(t.Context(), "the-lease", stepRequest("step-ptz"))
+	require.NoError(t, err)
+	require.Equal(t, "stepped", reply.Id)
+	require.Equal(t, holds.KindCamera, auth.kind)
+	require.Equal(t, "hold-1", camera.holdID)
+	require.Equal(t, "LEFT", camera.stepBody["direction"])
+}
+
+func TestDispatchStepPTZNeedsTheLeaseAndServesNothingElseOfTheCameraNamespace(t *testing.T) {
+	noLease := &fakeAuth{err: &holds.Error{Code: holds.CodeHoldLeaseRequired, Message: "no lease"}}
+	reply, err := New(noLease, &fakeMover{}, &fakeSnapshots{}, clock.NewFake(time.Unix(1000, 0))).Dispatch(t.Context(), "", stepRequest("step-ptz"))
+	require.NoError(t, err)
+	require.Equal(t, holds.CodeHoldLeaseRequired, exitcode.ProviderCode(reply))
+	require.Equal(t, exitcode.ExitHold, exitcode.Code(&apiclient.MessageRequestFailed{Request: reply}))
+
+	reply, err = newService(&fakeAuth{}, &fakeMover{}).Dispatch(t.Context(), "lease", stepRequest("ptz-control"))
+	require.NoError(t, err)
+	require.Equal(t, holds.CodeNotServedByHold, exitcode.ProviderCode(reply))
+
+	unavailable := &holds.Error{Code: holds.CodeCameraUnavailable, Message: "the held camera stopped"}
+	reply, err = New(&fakeAuth{}, &fakeMover{}, &fakeSnapshots{stepErr: unavailable}, clock.NewFake(time.Unix(1000, 0))).Dispatch(t.Context(), "lease", stepRequest("step-ptz"))
+	require.NoError(t, err)
+	require.Equal(t, holds.CodeCameraUnavailable, exitcode.ProviderCode(reply))
+}
+
+func TestSharedHoldNoTalkbackExitsBusy(t *testing.T) {
+	refusal := Refusal(time.Unix(1000, 0), "ep/1", holds.CodeSharedHoldNoTalkback, "no talkback")
+	require.Equal(t, exitcode.ExitBusy, exitcode.Code(&apiclient.MessageRequestFailed{Request: refusal}))
 }

@@ -210,6 +210,12 @@ func (c *pionCamera) Send(ctx context.Context, request *api.CreateMessageRequest
 	}}}}, nil
 }
 
+// Hold waits until the caller gives up, as a real session hold does while the subscriber is attached.
+func (c *pionCamera) Hold(ctx context.Context, _ string) (*api.MessageRequestHoldEnd, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
 func (c *pionCamera) pump(started <-chan struct{}, video, audio *webrtc.TrackLocalStaticSample) {
 	<-started
 	frame := time.Second / time.Duration(c.src.fps)

@@ -104,6 +104,25 @@ required.`,
 	return command
 }
 
+// GenerateStepPTZ returns the cobra command for step-ptz, which shares the move
+// command's implementation.
+func (c *MoveCliCommand) GenerateStepPTZ() *cobra.Command {
+	return &cobra.Command{
+		Short: "Step a held camera left, right, up or down",
+		Long: `Move a camera one pan or tilt step in the session of a camera hold.
+
+Pass the hold's lease with --lease or PORTOS_LEASE. The host sends the step in
+the hold's own camera session, so there is no session ID to handle. Without a
+live hold behind a lease the step is refused with hold_lease_required (exit 13).
+Take a snapshot after the step to see the new view.`,
+		Example: `  port msg step-ptz ep/0abc LEFT --lease "$PORTOS_LEASE"`,
+		Args:    cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return c.command.StepPTZ(cmd.Context(), commands.StepPTZParams{EndpointID: args[0], Direction: args[1]})
+		},
+	}
+}
+
 // SnapshotCommand wraps the snapshot command implementation.
 type SnapshotCommand struct {
 	command *commands.SnapshotCommand

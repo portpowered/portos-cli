@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/portpowered/portos-cli/internal/exitcode"
+	"github.com/portpowered/portos-cli/internal/host"
 	"github.com/portpowered/portos-cli/internal/hostclient"
 	"github.com/portpowered/portos-cli/internal/logging"
 )
@@ -108,5 +110,53 @@ func TestSessionStatusAndRelease(t *testing.T) {
 	}
 	if host.release != "hold-1" {
 		t.Fatalf("released %q", host.release)
+	}
+}
+
+func TestSessionHoldSharedAsksTheHostForASharedCamera(t *testing.T) {
+	host := &fakeSessionHost{}
+	cmd, formatter := newTestSessionCommand(host)
+	if err := cmd.Hold(t.Context(), HoldParams{EndpointID: "ep/1", Camera: true, Shared: true}); err != nil {
+		t.Fatal(err)
+	}
+	if len(host.opened) != 1 || !host.opened[0].Shared || len(host.opened[0].Kinds) != 1 || host.opened[0].Kinds[0] != "camera" {
+		t.Fatalf("opened = %+v, want a shared camera hold", host.opened)
+	}
+	if got, ok := formatter.printed[0].(HoldResult); !ok || !got.Shared {
+		t.Fatalf("printed = %+v, want shared in the result", formatter.printed[0])
+	}
+}
+
+func TestSessionHoldSharedNeedsTheCameraAlone(t *testing.T) {
+	for name, params := range map[string]HoldParams{
+		"no camera":         {EndpointID: "ep/1", Motion: true, Shared: true},
+		"motion and camera": {EndpointID: "ep/1", Motion: true, Camera: true, Shared: true},
+	} {
+		host := &fakeSessionHost{}
+		cmd, _ := newTestSessionCommand(host)
+		err := cmd.Hold(t.Context(), params)
+		if code := exitcode.Code(err); code != exitcode.ExitInvalid {
+			t.Fatalf("%s: exit code = %d (%v), want %d", name, code, err, exitcode.ExitInvalid)
+		}
+		if len(host.opened) != 0 {
+			t.Fatalf("%s: a hold was opened", name)
+		}
+	}
+}
+
+func TestSessionStatusShowsASharedCameraAndItsExpiry(t *testing.T) {
+	expires := time.Date(2026, 11, 11, 10, 0, 0, 0, time.UTC)
+	host := &fakeSessionHost{holds: []hostclient.Hold{{
+		ID: "hold-1", EndpointID: "ep/1", Kinds: []string{"camera"}, State: "live",
+		Camera: &host.CameraStatus{Live: true, Shared: true, ExpiresAt: &expires},
+	}}}
+	cmd, formatter := newTestSessionCommand(host)
+	formatter.json = false
+	if err := cmd.Status(t.Context(), ""); err != nil {
+		t.Fatal(err)
+	}
+	line, _ := formatter.printed[0].(string)
+	if !strings.Contains(line, "shared") || !strings.Contains(line, "2026-11-11T10:00:00Z") {
+		t.Fatalf("status line = %q, want shared and the expiry", line)
 	}
 }

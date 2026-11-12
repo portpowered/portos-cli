@@ -43,6 +43,9 @@ const (
 	ReasonRemoteControlNotActive Reason = "remote-control-not-active"
 	// ReasonPreempted ends a camera-only hold whose stream another viewer took.
 	ReasonPreempted Reason = "preempted"
+	// ReasonSessionExpired ends a shared camera hold at its session's expiry: a shared
+	// session is not renewed past the time Port OS gave it.
+	ReasonSessionExpired Reason = "session_expired"
 )
 
 // State is where a hold is in its life.
@@ -70,7 +73,23 @@ const (
 	CodeCameraUnavailable = "camera_unavailable"
 	// CodeTalkbackBusy is a clip sent while another plays on the held camera.
 	CodeTalkbackBusy = "talkback_busy"
+	// CodeSharedHoldNoTalkback is play-audio under a shared camera hold, which carries no
+	// talkback track because a call owns the speaker.
+	CodeSharedHoldNoTalkback = "shared_hold_no_talkback"
 )
+
+type sharedKey struct{}
+
+// WithShared marks ctx so the camera session a hold opens attaches as a shared subscriber.
+func WithShared(ctx context.Context) context.Context {
+	return context.WithValue(ctx, sharedKey{}, true)
+}
+
+// IsShared reports whether ctx asks for a shared camera session.
+func IsShared(ctx context.Context) bool {
+	shared, _ := ctx.Value(sharedKey{}).(bool)
+	return shared
+}
 
 // DeadManCloseTimeout bounds how long a dead-man ending waits for the sessions
 // to close, so a hung endpoint cannot leave a hold ending forever. It covers a

@@ -5,8 +5,10 @@ package hostservices
 import (
 	"context"
 	"errors"
+	"slices"
 	"time"
 
+	"github.com/portpowered/portos-cli/internal/api"
 	"github.com/portpowered/portos-cli/internal/auth"
 	"github.com/portpowered/portos-cli/internal/clock"
 	"github.com/portpowered/portos-cli/internal/host"
@@ -107,6 +109,13 @@ func (c heldCamera) Snapshot(ctx context.Context, holdID string) ([]byte, time.T
 	return frame.JPEG, frame.CapturedAt, err
 }
 
+func (c heldCamera) StepPTZ(ctx context.Context, holdID string, body map[string]any) (*api.MessageRequest, error) {
+	if c.camera == nil {
+		return nil, errNoCamera
+	}
+	return c.camera.StepPTZ(ctx, holdID, body)
+}
+
 func (c heldCamera) PlayAudio(ctx context.Context, holdID string, ogg []byte) (time.Duration, error) {
 	if c.camera == nil {
 		return 0, errNoCamera
@@ -192,6 +201,7 @@ func (a *holdAdapter) status(h holds.Hold) host.HoldStatus {
 			out.Camera = &host.CameraStatus{
 				Live: st.Live, OpenedAt: st.OpenedAt, RenewsAt: st.RenewsAt, Renewals: st.Renewals,
 				LastFrameAt: st.LastFrame, LostReason: st.LostReason,
+				Shared: st.Shared, ExpiresAt: st.ExpiresAt,
 			}
 		}
 	}
@@ -211,6 +221,12 @@ func (a *holdAdapter) Open(ctx context.Context, req host.OpenHoldRequest) (host.
 	kinds := make([]holds.Kind, len(req.Kinds))
 	for i, k := range req.Kinds {
 		kinds[i] = holds.Kind(k)
+	}
+	if req.Shared {
+		if !slices.Contains(kinds, holds.KindCamera) {
+			return host.OpenedHold{}, &host.CodedError{Code: host.CodeInvalidRequest, Message: "a shared hold needs the camera kind"}
+		}
+		ctx = holds.WithShared(ctx)
 	}
 	h, err := a.holds.Open(ctx, req.EndpointID, kinds, time.Duration(req.DeadManSeconds)*time.Second)
 	if err != nil {

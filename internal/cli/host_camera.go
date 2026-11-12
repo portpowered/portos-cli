@@ -24,12 +24,22 @@ type heldCameraOpener struct {
 var _ camera.Opener = (*heldCameraOpener)(nil)
 
 func (o *heldCameraOpener) Open(ctx context.Context, endpointID string, lifetime time.Duration) (camera.Stream, error) {
+	return o.open(ctx, endpointID, lifetime, false)
+}
+
+// OpenShared attaches to the endpoint's shared session as a receive-only subscriber.
+func (o *heldCameraOpener) OpenShared(ctx context.Context, endpointID string, lifetime time.Duration) (camera.Stream, error) {
+	return o.open(ctx, endpointID, lifetime, true)
+}
+
+func (o *heldCameraOpener) open(ctx context.Context, endpointID string, lifetime time.Duration, shared bool) (camera.Stream, error) {
 	n := o.opened.Add(1)
 	held, err := o.recorder.HoldCamera(ctx, commands.HeldCameraParams{
 		EndpointID:    endpointID,
 		SessionDomain: o.sessionDomain(),
 		SessionID:     fmt.Sprintf("hold-camera-%d-%d", time.Now().UnixNano(), n),
 		Lifetime:      lifetime,
+		Shared:        shared,
 	})
 	if err != nil {
 		return nil, err

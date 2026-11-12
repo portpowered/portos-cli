@@ -63,6 +63,8 @@ type HoldParams struct {
 	EndpointID string
 	Motion     bool
 	Camera     bool
+	// Shared attaches the camera hold to the endpoint's shared session. It needs Camera.
+	Shared bool
 	// DeadMan is how long the hold lives without a command; zero uses the host default.
 	DeadMan time.Duration
 }
@@ -75,6 +77,7 @@ type HoldResult struct {
 	Lease      string                             `json:"lease"`
 	EndpointID string                             `json:"endpointId"`
 	Kinds      []string                           `json:"kinds"`
+	Shared     bool                               `json:"shared,omitempty"`
 	Pose       *api.SpatialInterfacePoseAttribute `json:"pose"`
 }
 
@@ -93,6 +96,12 @@ func (c *SessionCommand) Hold(ctx context.Context, params HoldParams) error {
 	if len(kinds) == 0 {
 		return exitcode.NewInvalidArgument(errors.New("name what to hold: --motion, --camera or both"))
 	}
+	if params.Shared && !params.Camera {
+		return exitcode.NewInvalidArgument(errors.New("--shared holds the camera in the shared session; add --camera"))
+	}
+	if params.Shared && params.Motion {
+		return exitcode.NewInvalidArgument(errors.New("--shared holds only the camera; open the motion hold without --shared"))
+	}
 	if params.DeadMan < 0 {
 		return exitcode.NewInvalidArgument(errors.New("--dead-man must not be negative"))
 	}
@@ -108,12 +117,13 @@ func (c *SessionCommand) Hold(ctx context.Context, params HoldParams) error {
 	opened, err := host.OpenHold(ctx, hostclient.OpenHoldRequest{
 		EndpointID:     params.EndpointID,
 		Kinds:          kinds,
+		Shared:         params.Shared,
 		DeadManSeconds: int(params.DeadMan / time.Second),
 	})
 	if err != nil {
 		return err
 	}
-	result := HoldResult{HoldID: opened.ID, Lease: opened.Lease, EndpointID: opened.EndpointID, Kinds: opened.Kinds}
+	result := HoldResult{HoldID: opened.ID, Lease: opened.Lease, EndpointID: opened.EndpointID, Kinds: opened.Kinds, Shared: params.Shared}
 	if opened.Motion != nil {
 		result.Pose = opened.Motion.Pose
 	}
@@ -194,6 +204,12 @@ func (c *SessionCommand) printHolds(result SessionStatusResult) error {
 		line := fmt.Sprintf("%s  %s  %s  %s", hold.ID, hold.EndpointID, strings.Join(hold.Kinds, ","), hold.State)
 		if hold.Motion != nil {
 			line += fmt.Sprintf("  seq %d pending %d keepalive %s", hold.Motion.SeqNum, hold.Motion.Pending, hold.Motion.KeepaliveMode)
+		}
+		if camera := hold.Camera; camera != nil && camera.Shared {
+			line += "  shared"
+			if camera.ExpiresAt != nil {
+				line += "  expires " + camera.ExpiresAt.UTC().Format(time.RFC3339)
+			}
 		}
 		if hold.Ending != nil {
 			line += fmt.Sprintf("  ended: %s", hold.Ending.Reason)
