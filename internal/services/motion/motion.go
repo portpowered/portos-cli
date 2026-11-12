@@ -47,13 +47,16 @@ const (
 	TripPollInterval = time.Second
 	// tripStateFailures is how many state reads in a row may fail before the trip is given up.
 	tripStateFailures = 3
-	// tripCleanupTimeout bounds the stop and start-session sends that follow a trip, which run even if the caller gave
-	// up. It outlasts Port OS's own 30 s request deadline, so a slow provider answers with its typed timeout.
+	// tripCleanupTimeout bounds each start-session try and the stop that follows a trip, which run even if the caller
+	// gave up. It outlasts Port OS's own 30 s request deadline, so a slow provider answers with its typed timeout.
 	tripCleanupTimeout = 40 * time.Second
-	// RestartAttempts is how many times a trip's end sends start-session while the provider times out or no answer comes back.
-	RestartAttempts = 3
-	// RestartRetryPause is how long a trip's end waits before it sends start-session again.
-	RestartRetryPause = 5 * time.Second
+	// StartAttempts is how many times start-session is sent, when a hold opens and when a trip ends, while the
+	// provider times out, no answer comes back or the robot is still leaving its dock.
+	StartAttempts = 3
+	// StartRetryPause is how long the CLI waits before it sends start-session again.
+	StartRetryPause = 5 * time.Second
+	// OpenBudget is the longest opening a motion session can take: every start-session try and the pauses between them.
+	OpenBudget = tripCleanupTimeout*StartAttempts + StartRetryPause*(StartAttempts-1)
 )
 
 // Provider codes GoToPoint adds to the ones Port OS returns.
@@ -65,7 +68,7 @@ const (
 	// CodeGoToPointStateUnavailable is a trip whose operational state could not be read.
 	CodeGoToPointStateUnavailable = "go_to_point_state_unavailable"
 	// CodeGoToPointSessionLost is a trip after which Port OS refused to start the remote-control session again, or
-	// timed out on every one of RestartAttempts tries; the hold ends.
+	// timed out on every one of StartAttempts tries; the hold ends.
 	CodeGoToPointSessionLost = "go_to_point_session_lost"
 )
 
@@ -228,10 +231,15 @@ func (m *service) Open(ctx context.Context, holdID, endpointID string) error {
 	opened := make(chan struct{})
 	m.opening[holdID] = opened
 	m.mu.Unlock()
-	reply, err := m.client.SendSync(ctx, endpointID, api.INTERFACE_PORTOS_REMOTE_CONTROL, api.INTERFACE_PORTOS_REMOTE_CONTROL_START_SESSION, map[string]any{})
+	reply, err := m.startSession(ctx, endpointID, func(d time.Duration) error {
+		if ctx.Err() == nil {
+			m.pause(d)
+		}
+		return ctx.Err()
+	})
 	if startErr := replyError(api.INTERFACE_PORTOS_REMOTE_CONTROL_START_SESSION, reply, err); startErr != nil {
-		if startMayHaveLanded(reply, err) {
-			// The robot may be in remote control off its dock with nobody holding it.
+		if startWorthRetrying(reply, err) {
+			// The robot may be in remote control, or leaving its dock, with nobody holding it.
 			if homeErr := m.endAndSendHome(ctx, endpointID); homeErr != nil {
 				startErr = errors.Join(startErr, homeErr)
 			}
@@ -634,6 +642,29 @@ func startMayHaveLanded(reply *api.MessageRequest, err error) bool {
 		return !portos.IsUnauthorized(err)
 	}
 	return reply == nil || portos.HasCode(reply, string(api.ErrorCodePROVIDERTIMEOUT)) || portos.OutcomeUnknown(reply)
+}
+
+// startWorthRetrying reports whether a failed start-session may succeed when
+// sent again: it may have landed, or the robot was still moving when the
+// provider's wait ended (remote_control_not_started). Both may leave the robot
+// in remote control or off its dock.
+func startWorthRetrying(reply *api.MessageRequest, err error) bool {
+	return startMayHaveLanded(reply, err) || portos.HasCode(reply, providerNotStarted)
+}
+
+// startSession sends start-session, and sends it again while the failure is
+// worth retrying, up to StartAttempts tries. Each try has tripCleanupTimeout
+// within ctx. wait pauses between tries; an error from it stops the retries.
+func (m *service) startSession(ctx context.Context, endpoint string, wait func(time.Duration) error) (*api.MessageRequest, error) {
+	start := api.INTERFACE_PORTOS_REMOTE_CONTROL_START_SESSION
+	for try := 1; ; try++ {
+		tryCtx, cancel := context.WithTimeout(ctx, tripCleanupTimeout)
+		reply, err := m.client.SendSync(tryCtx, endpoint, api.INTERFACE_PORTOS_REMOTE_CONTROL, start, map[string]any{})
+		cancel()
+		if replyError(start, reply, err) == nil || try == StartAttempts || !startWorthRetrying(reply, err) || wait(StartRetryPause) != nil {
+			return reply, err
+		}
+	}
 }
 
 // endAndSendHome sends end-session, then return-to-dock, even if the caller

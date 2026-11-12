@@ -24,8 +24,10 @@ const StateEnded = "ended"
 // timeouts for up to motion.CloseBudget).
 const releaseTimeout = 150 * time.Second
 
-// openTimeout bounds how long POST /holds waits for the sessions to open.
-const openTimeout = 60 * time.Second
+// openTimeout bounds how long POST /holds waits for the sessions to open. It
+// covers motion.OpenBudget (130 s: start-session tried up to three times while
+// the provider times out) and the camera's open after it, so keep them in step.
+const openTimeout = 180 * time.Second
 
 // LeaseHeader carries the hold lease on POST /message-requests.
 const LeaseHeader = "Portos-Lease"

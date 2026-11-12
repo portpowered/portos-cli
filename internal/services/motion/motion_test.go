@@ -201,7 +201,7 @@ func TestOpenSendsStartSession(t *testing.T) {
 
 func TestOpenFailureIsAnError(t *testing.T) {
 	r := newRig(keepalive.ModePing)
-	r.client.handler = func(int, call) (*api.MessageRequest, error) { return failedReply("remote_control_not_started"), nil }
+	r.client.handler = func(int, call) (*api.MessageRequest, error) { return failedReply("remote_control_busy"), nil }
 	require.Error(t, r.svc.Open(context.Background(), holdID, endpointID))
 	_, err := r.svc.Move(context.Background(), holdID, agentMove())
 	require.Error(t, err, "no session was registered")
@@ -224,14 +224,68 @@ func timedOutReply() *api.MessageRequest {
 	return reply
 }
 
+// openAdvancing opens the hold while advancing the clock past each start-session retry pause.
+func (r *rig) openAdvancing(t *testing.T) error {
+	t.Helper()
+	opened := make(chan error, 1)
+	go func() { opened <- r.svc.Open(context.Background(), holdID, endpointID) }()
+	for {
+		select {
+		case err := <-opened:
+			return err
+		case <-time.After(pollEvery):
+			r.clock.Advance(motion.StartRetryPause)
+		}
+	}
+}
+
+// everyStartFailed is the calls of an open whose start-session failed on every try and was sent home.
+func everyStartFailed() []string {
+	names := make([]string, 0, motion.StartAttempts+2)
+	for range motion.StartAttempts {
+		names = append(names, "start-session")
+	}
+	return append(names, "end-session", "return-to-dock")
+}
+
 func TestAnOpenTheProviderTimedOutSendsTheRobotHome(t *testing.T) {
 	r := newRig(keepalive.ModePing)
 	r.client.handler = failStart(timedOutReply(), nil)
-	err := r.svc.Open(context.Background(), holdID, endpointID)
+	err := r.openAdvancing(t)
 	require.ErrorContains(t, err, "PROVIDER_TIMEOUT")
-	require.Equal(t, []string{"start-session", "end-session", "return-to-dock"}, r.client.names())
+	require.Equal(t, everyStartFailed(), r.client.names())
 	r.client.handler = nil
 	require.NoError(t, r.svc.Open(context.Background(), holdID, endpointID), "the failed open left nothing registered")
+}
+
+func TestAnOpenStillLeavingTheDockSendsTheRobotHome(t *testing.T) {
+	r := newRig(keepalive.ModePing)
+	r.client.handler = failStart(failedReply("remote_control_not_started"), nil)
+	require.ErrorContains(t, r.openAdvancing(t), "remote_control_not_started")
+	require.Equal(t, everyStartFailed(), r.client.names(), "the robot may have left its dock, so it is sent home")
+}
+
+func TestAnOpenRidesOutASlowStart(t *testing.T) {
+	for name, failure := range map[string]*api.MessageRequest{
+		"provider timeout": timedOutReply(),
+		"still moving":     failedReply("remote_control_not_started"),
+		"request deadline": deadlineReply(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newRig(keepalive.ModePing)
+			var starts atomic.Int32
+			r.client.handler = func(_ int, c call) (*api.MessageRequest, error) {
+				if c.name == "start-session" && int(starts.Add(1)) < motion.StartAttempts {
+					return failure, nil
+				}
+				return moveReply(0, 0), nil
+			}
+			require.NoError(t, r.openAdvancing(t))
+			require.Equal(t, motion.StartAttempts, int(starts.Load()))
+			_, err := r.svc.Move(context.Background(), holdID, agentMove())
+			require.NoError(t, err, "the session is registered")
+		})
+	}
 }
 
 // deadlineReply is a start-session Port OS stopped waiting for at its request
@@ -246,16 +300,16 @@ func deadlineReply() *api.MessageRequest {
 func TestAnOpenCutOffAtTheRequestDeadlineSendsTheRobotHome(t *testing.T) {
 	r := newRig(keepalive.ModePing)
 	r.client.handler = failStart(deadlineReply(), nil)
-	err := r.svc.Open(context.Background(), holdID, endpointID)
+	err := r.openAdvancing(t)
 	require.ErrorContains(t, err, "TIMED_OUT")
-	require.Equal(t, []string{"start-session", "end-session", "return-to-dock"}, r.client.names())
+	require.Equal(t, everyStartFailed(), r.client.names())
 }
 
 func TestAnOpenWithNoReplySendsTheRobotHome(t *testing.T) {
 	r := newRig(keepalive.ModePing)
 	r.client.handler = failStart(nil, context.DeadlineExceeded)
-	require.ErrorIs(t, r.svc.Open(context.Background(), holdID, endpointID), context.DeadlineExceeded)
-	require.Equal(t, []string{"start-session", "end-session", "return-to-dock"}, r.client.names())
+	require.ErrorIs(t, r.openAdvancing(t), context.DeadlineExceeded)
+	require.Equal(t, everyStartFailed(), r.client.names())
 }
 
 func TestAnOpenRejectedForAuthSendsNothingHome(t *testing.T) {

@@ -312,7 +312,7 @@ func TestGoToPointRestartRidesOutASlowProvider(t *testing.T) {
 			starts := 0
 			r.client.handler = func(n int, c call) (*api.MessageRequest, error) {
 				if c.name == "start-session" {
-					if starts++; starts < motion.RestartAttempts {
+					if starts++; starts < motion.StartAttempts {
 						return failure()
 					}
 				}
@@ -322,7 +322,7 @@ func TestGoToPointRestartRidesOutASlowProvider(t *testing.T) {
 			require.NoError(t, o.err)
 			pose, _ := replyPose(t, o.reply)
 			require.Equal(t, []float32{1.5, 0}, pose.Point.Coordinates)
-			require.Equal(t, motion.RestartAttempts, restartCalls(r.client.names()))
+			require.Equal(t, motion.StartAttempts, restartCalls(r.client.names()))
 			select {
 			case f := <-r.fatals:
 				t.Fatalf("the hold ended: %v", f)
@@ -344,7 +344,7 @@ func TestGoToPointRestartEndsTheHoldAfterEveryTryTimesOut(t *testing.T) {
 	}
 	o := r.finish(t, r.startTrip(tripBody()))
 	requireCode(t, o.err, motion.CodeGoToPointSessionLost)
-	require.Equal(t, motion.RestartAttempts, restartCalls(r.client.names()))
+	require.Equal(t, motion.StartAttempts, restartCalls(r.client.names()))
 	f := <-r.fatals
 	require.Equal(t, holds.ReasonEndpointError, f.reason)
 }
