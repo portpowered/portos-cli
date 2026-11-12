@@ -302,6 +302,13 @@ func TestResolverStepPTZUsesTheCameraHoldOnly(t *testing.T) {
 	require.Equal(t, "the-lease", host.sent[0].lease)
 	require.Zero(t, messages.sent)
 
+	// Continuous turns are the hold's too.
+	for _, name := range []string{api.INTERFACE_PORTOS_CAMERA_MOVE_PTZ, api.INTERFACE_PORTOS_CAMERA_STOP_PTZ} {
+		turn, err := r.For(t.Context(), "ep/1", cam, name)
+		require.NoError(t, err)
+		require.True(t, Held(turn), name+" goes to the camera hold")
+	}
+
 	// Another camera message is not the hold's, so it keeps the cloud path.
 	other, err := r.For(t.Context(), "ep/1", cam, api.INTERFACE_PORTOS_CAMERA_GET_EVENT_IMAGE)
 	require.NoError(t, err)

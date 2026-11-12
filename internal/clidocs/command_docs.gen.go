@@ -649,6 +649,67 @@ var Commands = map[string]CommandDoc{
 			},
 		},
 	},
+	"port.message.move-ptz": {
+		ID: "port.message.move-ptz",
+		Path: []string{
+			"port",
+			"message",
+			"move-ptz",
+		},
+		Summary:            "Turn a held camera continuously left, right, up or down",
+		Description:        "Turn a camera continuously in the session of a camera hold (the lease from session hold --camera), at --speed (a fraction of full speed, full by default) for --seconds. With --seconds the reply comes once the camera has stopped and says how far it turned and where it points, and turns well under a second work. Without --seconds the reply comes as soon as the camera turns and marks that axis as still turning; the camera keeps turning until stop-ptz, another move-ptz or step-ptz on that axis, or the end of its range. A pan and a tilt can run at once, so LEFT and UP together turn the camera diagonally. --seconds 60 turns the camera to the end of its range in that direction, which anchors the position so pan and tilt count from the ends. The host sends the turn in the hold's own camera session and fills the session ID. Without a lease and a live camera hold the turn is refused as hold_lease_required (exit 13).",
+		Category:           "messages",
+		CanonicalReference: "api/cli/commands.yaml",
+		Arguments: []ArgumentDoc{
+			{
+				Name:        "endpoint-id",
+				Description: "Camera endpoint ID or local endpoint alias.",
+				Required:    true,
+				Variadic:    false,
+			},
+			{
+				Name:        "direction",
+				Description: "LEFT, RIGHT, UP or DOWN.",
+				Required:    true,
+				Variadic:    false,
+			},
+		},
+		Flags: []FlagDoc{
+			{
+				Name:        "speed",
+				Shorthand:   "",
+				Type:        "float64",
+				Default:     "0",
+				Required:    false,
+				Description: "Fraction of full speed, 0.1 to 1. Without it the camera turns at full speed.",
+			},
+			{
+				Name:        "seconds",
+				Shorthand:   "",
+				Type:        "float64",
+				Default:     "0",
+				Required:    false,
+				Description: "How long to turn, 0.1 to 60. Without it the camera turns until stop-ptz or the end of its range.",
+			},
+		},
+		Examples: []ExampleDoc{
+			{
+				Description: "Turn the held camera all the way left, then look.",
+				Invocation:  "port message move-ptz ep/a1b2c3d4 LEFT --seconds 60 --lease \"$PORTOS_LEASE\" && port message snapshot ep/a1b2c3d4 view.jpg --lease \"$PORTOS_LEASE\"",
+				Output:      "",
+			},
+			{
+				Description: "Nudge the camera right for half a second and print the new position as JSON.",
+				Invocation:  "port message move-ptz ep/a1b2c3d4 RIGHT --seconds 0.5 --lease \"$PORTOS_LEASE\" --json",
+				Output:      "",
+			},
+			{
+				Description: "Start a slow tilt up and stop it when the view is right.",
+				Invocation:  "port message move-ptz ep/a1b2c3d4 UP --speed 0.3 --lease \"$PORTOS_LEASE\" && port message stop-ptz ep/a1b2c3d4 --axis TILT --lease \"$PORTOS_LEASE\"",
+				Output:      "",
+			},
+		},
+	},
 	"port.message.play-audio": {
 		ID: "port.message.play-audio",
 		Path: []string{
@@ -919,6 +980,48 @@ var Commands = map[string]CommandDoc{
 			{
 				Description: "Look up about 30 degrees and print the new position as JSON.",
 				Invocation:  "port message step-ptz ep/a1b2c3d4 UP --degrees 30 --lease \"$PORTOS_LEASE\" --json",
+				Output:      "",
+			},
+		},
+	},
+	"port.message.stop-ptz": {
+		ID: "port.message.stop-ptz",
+		Path: []string{
+			"port",
+			"message",
+			"stop-ptz",
+		},
+		Summary:            "Stop a held camera's continuous turn",
+		Description:        "Stop the continuous turn a move-ptz started, on one axis with --axis or on both without it, in the session of a camera hold. The reply says how far the camera turned and where it now points. An axis that is not turning is left alone and the reply still says where the camera points.",
+		Category:           "messages",
+		CanonicalReference: "api/cli/commands.yaml",
+		Arguments: []ArgumentDoc{
+			{
+				Name:        "endpoint-id",
+				Description: "Camera endpoint ID or local endpoint alias.",
+				Required:    true,
+				Variadic:    false,
+			},
+		},
+		Flags: []FlagDoc{
+			{
+				Name:        "axis",
+				Shorthand:   "",
+				Type:        "string",
+				Default:     "",
+				Required:    false,
+				Description: "PAN or TILT. Without it both axes stop.",
+			},
+		},
+		Examples: []ExampleDoc{
+			{
+				Description: "Stop every turn on the held camera.",
+				Invocation:  "port message stop-ptz ep/a1b2c3d4 --lease \"$PORTOS_LEASE\"",
+				Output:      "",
+			},
+			{
+				Description: "Stop the pan and leave a tilt running.",
+				Invocation:  "port message stop-ptz ep/a1b2c3d4 --axis PAN --lease \"$PORTOS_LEASE\"",
 				Output:      "",
 			},
 		},
@@ -1475,7 +1578,7 @@ var Commands = map[string]CommandDoc{
 				Type:        "bool",
 				Default:     "false",
 				Required:    false,
-				Description: "With --camera, attach to the endpoint's shared session, so a call and this hold watch the one camera. The hold is receive-only with no talkback (play-audio is refused as shared_hold_no_talkback, exit 12), snapshots, record and step-ptz work under the lease, and the hold ends as session_expired when the session's time runs out (about an hour from the first attach) or as session_closed when the session closes for every viewer before then (a Ring camera ends its live view after about 12 minutes); hold the camera again to keep looking.",
+				Description: "With --camera, attach to the endpoint's shared session, so a call and this hold watch the one camera. The hold is receive-only with no talkback (play-audio is refused as shared_hold_no_talkback, exit 12), snapshots, record, step-ptz, move-ptz and stop-ptz work under the lease, and the hold ends as session_expired when the session's time runs out (about an hour from the first attach) or as session_closed when the session closes for every viewer before then (a Ring camera ends its live view after about 12 minutes); hold the camera again to keep looking.",
 			},
 			{
 				Name:        "dead-man",

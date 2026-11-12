@@ -47,9 +47,9 @@ type Stream interface {
 	Play(ctx context.Context, ogg []byte) (time.Duration, error)
 	// Record copies the video into a file for the duration and returns it.
 	Record(ctx context.Context, duration time.Duration) (Clip, error)
-	// StepPTZ sends camera/step-ptz for the stream's own session and returns the reply
-	// from Port OS. Any sessionId in body is replaced.
-	StepPTZ(ctx context.Context, body map[string]any) (*api.MessageRequest, error)
+	// PTZ sends a camera PTZ message (step-ptz, move-ptz or stop-ptz) for the stream's own
+	// session and returns the reply from Port OS. Any sessionId in body is replaced.
+	PTZ(ctx context.Context, name string, body map[string]any) (*api.MessageRequest, error)
 	// ExpiresAt is when a shared stream's session ends; zero for a single-peer stream.
 	ExpiresAt() time.Time
 	// EndReason says why a shared stream's session hold ended (DETACHED, SESSION_CLOSED,
@@ -110,8 +110,9 @@ type Service interface {
 	PlayAudio(ctx context.Context, holdID string, ogg []byte) (time.Duration, error)
 	// Record copies the held video into a file for the duration.
 	Record(ctx context.Context, holdID string, duration time.Duration) (Clip, error)
-	// StepPTZ sends camera/step-ptz with the hold's own session and returns the reply from Port OS.
-	StepPTZ(ctx context.Context, holdID string, body map[string]any) (*api.MessageRequest, error)
+	// PTZ sends a camera PTZ message (step-ptz, move-ptz or stop-ptz) with the hold's own
+	// session and returns the reply from Port OS.
+	PTZ(ctx context.Context, holdID, name string, body map[string]any) (*api.MessageRequest, error)
 	Status(holdID string) (Status, bool)
 }
 
@@ -345,17 +346,17 @@ func (s *service) isShared(holdID string) bool {
 	return h != nil && h.shared
 }
 
-func (s *service) StepPTZ(ctx context.Context, holdID string, body map[string]any) (*api.MessageRequest, error) {
+func (s *service) PTZ(ctx context.Context, holdID, name string, body map[string]any) (*api.MessageRequest, error) {
 	stream, err := s.liveStream(holdID)
 	if err != nil {
 		return nil, err
 	}
-	reply, err := stream.StepPTZ(ctx, body)
+	reply, err := stream.PTZ(ctx, name, body)
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		return nil, unavailable("step the held camera: " + err.Error())
+		return nil, unavailable("turn the held camera: " + err.Error())
 	}
 	return reply, nil
 }

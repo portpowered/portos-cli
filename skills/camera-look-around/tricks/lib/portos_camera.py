@@ -9,6 +9,7 @@ standard library. Every camera command goes through `port`.
         camera.anchor()                     # left and bottom ends, so angles are exact
         camera.look_at(pan=170, tilt=40)
         camera.snapshot("sofa.jpg")
+        camera.move("RIGHT", 0.5)           # a quick nudge, answered in under a second
 
 If PORTOS_LEASE is already set (you ran `port session hold` yourself), Camera uses that hold and
 leaves it open when the block ends: whoever opens a hold releases it.
@@ -16,6 +17,11 @@ leaves it open when the block ends: whoever opens a hold releases it.
 Angles: pan counts degrees right of the left end and tilt counts degrees up from the bottom end,
 once the camera has been turned to that end in this camera session (`anchor()` does both). Before
 that they count from where the session started, and `pan_known` / `tilt_known` are False.
+
+Two ways to turn: `turn` goes by angle in whole steps of about 15 degrees and counts them, so it
+is the exact one; `move` turns continuously for a time (or to the end, or until `stop`), so it is
+the fast one, and the angles it reports are estimated from time and speed. Anchor again to correct
+any drift.
 """
 
 import json
@@ -33,6 +39,8 @@ EXIT_CAMERA = 14
 
 # A turn of 360 degrees runs the camera to the end of its range in that direction.
 TO_END = 360
+# A continuous move of 60 seconds, the longest there is, runs the camera to the end of its range.
+TO_END_SECONDS = 60
 
 
 class CameraError(Exception):
@@ -66,6 +74,8 @@ class Position:
     pan_known: bool
     tilt_known: bool
     moved: float = 0.0
+    pan_moving: bool = False
+    tilt_moving: bool = False
 
     @staticmethod
     def from_reply(value: dict) -> "Position":
@@ -77,6 +87,8 @@ class Position:
             pan_known=value["panReference"] == "LEFT_END",
             tilt_known=value["tiltReference"] == "BOTTOM_END",
             moved=float(value.get("movedDegrees", 0)),
+            pan_moving=bool(value.get("panMoving", False)),
+            tilt_moving=bool(value.get("tiltMoving", False)),
         )
 
 
@@ -171,18 +183,44 @@ class Camera:
         args = ["message", "step-ptz", self.endpoint, direction]
         if degrees:
             args += ["--degrees", "%g" % min(max(degrees, 1), TO_END)]
-        reply = self.port.json(args)
+        return self._position(self.port.json(args))
+
+    def move(self, direction: str, seconds: Optional[float] = None, speed: Optional[float] = None) -> Position:
+        """Turns LEFT, RIGHT, UP or DOWN continuously, at speed (0.1 to 1, default full). With
+        seconds (0.1 to 60) it returns once the camera has stopped; TO_END_SECONDS runs to the
+        end. Without seconds it returns as soon as the camera turns, and the camera keeps turning
+        until stop(), another move on that axis, or the end of its range. A pan and a tilt can
+        run at once."""
+        args = ["message", "move-ptz", self.endpoint, direction]
+        if seconds:
+            args += ["--seconds", "%g" % min(max(seconds, 0.1), TO_END_SECONDS)]
+        if speed:
+            args += ["--speed", "%g" % min(max(speed, 0.1), 1)]
+        return self._position(self.port.json(args))
+
+    def stop(self, axis: Optional[str] = None) -> Position:
+        """Stops a continuous move on PAN or TILT, or on both, and returns where the camera stopped."""
+        args = ["message", "stop-ptz", self.endpoint]
+        if axis:
+            args += ["--axis", axis]
+        return self._position(self.port.json(args))
+
+    def to_end(self, direction: str) -> Position:
+        """Runs the camera to the end of its range in direction: the fast way to an end."""
+        return self.move(direction, TO_END_SECONDS)
+
+    def _position(self, reply: dict) -> Position:
         if not reply.get("position"):
             raise CameraError(0, "the camera reported no position after the turn")
         self.position = Position.from_reply(reply["position"])
         return self.position
 
     def anchor(self, pan: bool = True, tilt: bool = True) -> Position:
-        """Turns to the left end and the bottom end, so later angles are exact."""
+        """Runs to the left end and the bottom end, so later angles are exact."""
         if pan:
-            self.turn("LEFT", TO_END)
+            self.to_end("LEFT")
         if tilt:
-            self.turn("DOWN", TO_END)
+            self.to_end("DOWN")
         return self.position
 
     def look_at(self, pan: Optional[float] = None, tilt: Optional[float] = None) -> Position:

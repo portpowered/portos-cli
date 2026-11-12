@@ -136,6 +136,59 @@ Take a snapshot after the turn to see the new view.`,
 	return command
 }
 
+// GenerateMovePTZ returns the cobra command for move-ptz, which shares the move
+// command's implementation.
+func (c *MoveCliCommand) GenerateMovePTZ() *cobra.Command {
+	var speed, seconds float64
+	command := &cobra.Command{
+		Short: "Turn a held camera continuously left, right, up or down",
+		Long: `Turn a camera continuously in the session of a camera hold, at --speed (a
+fraction of full speed, default full) for --seconds.
+
+With --seconds the reply comes once the camera has stopped and says how far it
+turned and where it points; sub-second turns are fine. Without --seconds the reply
+comes as soon as the camera turns and says the axis is still turning; it keeps
+turning until stop-ptz, another move-ptz or step-ptz on that axis, or the end of
+its range. A pan and a tilt can run at once, so LEFT and UP together turn the
+camera diagonally. --seconds 60 turns to the end of the range in that direction.
+
+Pass the hold's lease with --lease or PORTOS_LEASE. The host sends the turn in
+the hold's own camera session, so there is no session ID to handle. Without a
+live hold behind a lease the turn is refused with hold_lease_required (exit 13).`,
+		Example: `  port msg move-ptz ep/0abc LEFT --seconds 60 --lease "$PORTOS_LEASE"
+  port msg move-ptz ep/0abc RIGHT --seconds 0.5 --lease "$PORTOS_LEASE"
+  port msg move-ptz ep/0abc UP --speed 0.5 --lease "$PORTOS_LEASE"`,
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return c.command.MovePTZ(cmd.Context(), commands.MovePTZParams{EndpointID: args[0], Direction: args[1], Speed: speed, Seconds: seconds})
+		},
+	}
+	command.Flags().Float64Var(&speed, "speed", 0, "fraction of full speed, 0.1 to 1 (default full speed)")
+	command.Flags().Float64Var(&seconds, "seconds", 0, "how long to turn, 0.1 to 60 (default until stop-ptz or the end of the range)")
+	return command
+}
+
+// GenerateStopPTZ returns the cobra command for stop-ptz, which shares the move
+// command's implementation.
+func (c *MoveCliCommand) GenerateStopPTZ() *cobra.Command {
+	var axis string
+	command := &cobra.Command{
+		Short: "Stop a held camera's continuous turn",
+		Long: `Stop the continuous turn a move-ptz started on one axis, or on both without
+--axis. The reply says how far the camera turned and where it now points.
+
+Pass the hold's lease with --lease or PORTOS_LEASE.`,
+		Example: `  port msg stop-ptz ep/0abc --lease "$PORTOS_LEASE"
+  port msg stop-ptz ep/0abc --axis PAN --lease "$PORTOS_LEASE"`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return c.command.StopPTZ(cmd.Context(), commands.StopPTZParams{EndpointID: args[0], Axis: axis})
+		},
+	}
+	command.Flags().StringVar(&axis, "axis", "", "PAN or TILT (default both)")
+	return command
+}
+
 // SnapshotCommand wraps the snapshot command implementation.
 type SnapshotCommand struct {
 	command *commands.SnapshotCommand

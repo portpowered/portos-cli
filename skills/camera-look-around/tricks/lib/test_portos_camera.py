@@ -7,10 +7,10 @@ import tempfile
 import unittest
 
 from portos_camera import (
-    TO_END, Camera, CameraError, HoldProblem, Position, scan_angles, turns_to,
+    TO_END, TO_END_SECONDS, Camera, CameraError, HoldProblem, Position, scan_angles, turns_to,
 )
 
-PAN_RANGE, TILT_RANGE, STEP = 340.0, 169.0, 15.0
+PAN_RANGE, TILT_RANGE, STEP, RATE = 340.0, 169.0, 15.0, 20.0
 
 
 def known(pan, tilt):
@@ -63,22 +63,34 @@ class FakePort:
             open(args[args.index("--output") + 1], "wb").close()
             return {}
         if args[:2] == ["message", "step-ptz"]:
-            return self._turn(args[3], float(args[args.index("--degrees") + 1]) if "--degrees" in args else 0)
+            degrees = float(args[args.index("--degrees") + 1]) if "--degrees" in args else 0
+            return self._turn(args[3], max(1, round(degrees / STEP)) * STEP if degrees else STEP, degrees >= TO_END)
+        if args[:2] == ["message", "move-ptz"]:
+            if "--seconds" not in args:
+                return self._report(0, moving=args[3])
+            seconds = float(args[args.index("--seconds") + 1])
+            speed = float(args[args.index("--speed") + 1]) if "--speed" in args else 1.0
+            return self._turn(args[3], seconds * RATE * speed, seconds >= TO_END_SECONDS)
+        if args[:2] == ["message", "stop-ptz"]:
+            return self._report(0)
         raise AssertionError("unexpected command %s" % args)
 
-    def _turn(self, direction, degrees):
-        steps = max(1, round(degrees / STEP)) if degrees else 1
+    def _turn(self, direction, degrees, to_end):
         sign = 1 if direction in ("RIGHT", "UP") else -1
         axis, span = ("pan", PAN_RANGE) if direction in ("LEFT", "RIGHT") else ("tilt", TILT_RANGE)
         before = getattr(self, axis)
-        after = min(max(before + sign * steps * STEP, 0), span)
+        after = min(max(before + sign * degrees, 0), span)
         setattr(self, axis, after)
-        if degrees >= TO_END:
+        if to_end:
             setattr(self, axis + "_known", True)
+        return self._report(abs(after - before))
+
+    def _report(self, moved, moving=None):
         def reported(name, value, start):
             return value if getattr(self, name + "_known") else value - start
         return {"position": {
-            "movedDegrees": abs(after - before),
+            "movedDegrees": moved,
+            "panMoving": moving in ("LEFT", "RIGHT"), "tiltMoving": moving in ("UP", "DOWN"),
             "panDegrees": reported("pan", self.pan, self.start[0]), "panRangeDegrees": PAN_RANGE,
             "panReference": "LEFT_END" if self.pan_known else "SESSION_START",
             "tiltDegrees": reported("tilt", self.tilt, self.start[1]), "tiltRangeDegrees": TILT_RANGE,
@@ -110,7 +122,8 @@ class CameraCalls(unittest.TestCase):
         camera = Camera("cam", self.port, self.log)
         position = camera.look_at(pan=170, tilt=45)
         turns = [call[3:] for call in self.port.calls]
-        self.assertEqual(turns[:2], [["LEFT", "--degrees", "360"], ["DOWN", "--degrees", "360"]])
+        self.assertEqual(self.port.calls[0][:2], ["message", "move-ptz"])
+        self.assertEqual(turns[:2], [["LEFT", "--seconds", "60"], ["DOWN", "--seconds", "60"]])
         self.assertTrue(position.pan_known and position.tilt_known)
         self.assertAlmostEqual(position.pan, 165, delta=STEP)
         self.assertAlmostEqual(position.tilt, 45, delta=STEP)
@@ -134,6 +147,32 @@ class CameraCalls(unittest.TestCase):
             self.assertEqual(pans, sorted(pans))
             for frame in frames:
                 self.assertTrue(os.path.exists(frame["path"]))
+
+    def test_move_turns_for_a_time_or_until_stopped(self):
+        camera = Camera("cam", self.port, self.log)
+        camera.anchor()
+        self.port.calls.clear()
+        nudged = camera.move("RIGHT", 0.5)
+        self.assertEqual(self.port.calls[0], ["message", "move-ptz", "cam", "RIGHT", "--seconds", "0.5"])
+        self.assertEqual(nudged.pan, 10)
+        self.assertFalse(nudged.pan_moving)
+        turning = camera.move("UP", speed=0.3)
+        self.assertEqual(self.port.calls[1], ["message", "move-ptz", "cam", "UP", "--speed", "0.3"])
+        self.assertTrue(turning.tilt_moving)
+        camera.stop("TILT")
+        camera.stop()
+        self.assertEqual(self.port.calls[2:], [["message", "stop-ptz", "cam", "--axis", "TILT"], ["message", "stop-ptz", "cam"]])
+        self.assertFalse(camera.position.tilt_moving)
+
+    def test_move_clamps_seconds_and_speed_and_to_end_runs_the_longest_move(self):
+        camera = Camera("cam", self.port, self.log)
+        camera.move("LEFT", 0.01, 5)
+        camera.move("LEFT", 600)
+        camera.to_end("RIGHT")
+        self.assertEqual([call[4:] for call in self.port.calls], [
+            ["--seconds", "0.1", "--speed", "1"], ["--seconds", "%g" % TO_END_SECONDS], ["--seconds", "%g" % TO_END_SECONDS]])
+        self.assertEqual(camera.position.pan, PAN_RANGE)
+        self.assertTrue(camera.position.pan_known)
 
     def test_a_refused_hold_raises_its_typed_error(self):
         self.port.fail = HoldProblem(13, "hold_ended")

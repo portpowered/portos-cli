@@ -109,11 +109,11 @@ func (c heldCamera) Snapshot(ctx context.Context, holdID string) ([]byte, time.T
 	return frame.JPEG, frame.CapturedAt, err
 }
 
-func (c heldCamera) StepPTZ(ctx context.Context, holdID string, body map[string]any) (*api.MessageRequest, error) {
+func (c heldCamera) PTZ(ctx context.Context, holdID, name string, body map[string]any) (*api.MessageRequest, error) {
 	if c.camera == nil {
 		return nil, errNoCamera
 	}
-	return c.camera.StepPTZ(ctx, holdID, body)
+	return c.camera.PTZ(ctx, holdID, name, body)
 }
 
 func (c heldCamera) PlayAudio(ctx context.Context, holdID string, ogg []byte) (time.Duration, error) {

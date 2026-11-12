@@ -66,6 +66,7 @@ type fakeSnapshots struct {
 	err      error
 	played   []byte
 	playErr  error
+	stepName string
 	stepBody map[string]any
 	stepErr  error
 }
@@ -84,8 +85,9 @@ func (f *fakeSnapshots) PlayAudio(_ context.Context, holdID string, ogg []byte) 
 	return time.Second, nil
 }
 
-func (f *fakeSnapshots) StepPTZ(_ context.Context, holdID string, body map[string]any) (*api.MessageRequest, error) {
+func (f *fakeSnapshots) PTZ(_ context.Context, holdID, name string, body map[string]any) (*api.MessageRequest, error) {
 	f.holdID = holdID
+	f.stepName = name
 	f.stepBody = body
 	return &api.MessageRequest{Id: "stepped", Status: api.SUCCEEDED}, f.stepErr
 }
@@ -334,15 +336,18 @@ func stepRequest(name string) *api.CreateMessageRequest {
 	}
 }
 
-func TestDispatchStepsTheHeldCameraInItsOwnSession(t *testing.T) {
-	auth := &fakeAuth{}
-	camera := &fakeSnapshots{}
-	reply, err := New(auth, &fakeMover{}, camera, clock.NewFake(time.Unix(1000, 0))).Dispatch(t.Context(), "the-lease", stepRequest("step-ptz"))
-	require.NoError(t, err)
-	require.Equal(t, "stepped", reply.Id)
-	require.Equal(t, holds.KindCamera, auth.kind)
-	require.Equal(t, "hold-1", camera.holdID)
-	require.Equal(t, "LEFT", camera.stepBody["direction"])
+func TestDispatchTurnsTheHeldCameraInItsOwnSession(t *testing.T) {
+	for _, name := range []string{"step-ptz", "move-ptz", "stop-ptz"} {
+		auth := &fakeAuth{}
+		camera := &fakeSnapshots{}
+		reply, err := New(auth, &fakeMover{}, camera, clock.NewFake(time.Unix(1000, 0))).Dispatch(t.Context(), "the-lease", stepRequest(name))
+		require.NoError(t, err)
+		require.Equal(t, "stepped", reply.Id)
+		require.Equal(t, holds.KindCamera, auth.kind)
+		require.Equal(t, "hold-1", camera.holdID)
+		require.Equal(t, name, camera.stepName)
+		require.Equal(t, "LEFT", camera.stepBody["direction"])
+	}
 }
 
 func TestDispatchStepPTZNeedsTheLeaseAndServesNothingElseOfTheCameraNamespace(t *testing.T) {
@@ -352,7 +357,7 @@ func TestDispatchStepPTZNeedsTheLeaseAndServesNothingElseOfTheCameraNamespace(t 
 	require.Equal(t, holds.CodeHoldLeaseRequired, exitcode.ProviderCode(reply))
 	require.Equal(t, exitcode.ExitHold, exitcode.Code(&apiclient.MessageRequestFailed{Request: reply}))
 
-	reply, err = newService(&fakeAuth{}, &fakeMover{}).Dispatch(t.Context(), "lease", stepRequest("ptz-control"))
+	reply, err = newService(&fakeAuth{}, &fakeMover{}).Dispatch(t.Context(), "lease", stepRequest("get-event-image"))
 	require.NoError(t, err)
 	require.Equal(t, holds.CodeNotServedByHold, exitcode.ProviderCode(reply))
 

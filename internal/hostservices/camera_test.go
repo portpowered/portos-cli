@@ -30,7 +30,7 @@ func (s *stubStream) Play(context.Context, []byte) (time.Duration, error) { retu
 func (s *stubStream) Record(context.Context, time.Duration) (camera.Clip, error) {
 	return camera.Clip{Path: "held.h264", Codec: "H264", FrameRate: 15}, nil
 }
-func (s *stubStream) StepPTZ(context.Context, map[string]any) (*api.MessageRequest, error) {
+func (s *stubStream) PTZ(context.Context, string, map[string]any) (*api.MessageRequest, error) {
 	return &api.MessageRequest{Id: "step", Status: api.SUCCEEDED}, nil
 }
 func (s *stubStream) ExpiresAt() time.Time        { return time.Time{} }

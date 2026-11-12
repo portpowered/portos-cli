@@ -362,11 +362,12 @@ const (
 	INTERFACE_PORTOS_CALENDAR_PROVIDER_LIST_EVENTS_RESPONSE             = "list-events-response"
 	INTERFACE_PORTOS_CAMERA_EVENT_IMAGE_RESPONSE                        = "event-image-response"
 	INTERFACE_PORTOS_CAMERA_GET_EVENT_IMAGE                             = "get-event-image"
-	INTERFACE_PORTOS_CAMERA_PTZ_CONTROL                                 = "ptz-control"
+	INTERFACE_PORTOS_CAMERA_MOVE_PTZ                                    = "move-ptz"
 	INTERFACE_PORTOS_CAMERA_PTZ_POSITION                                = "ptz-position"
 	INTERFACE_PORTOS_CAMERA_SET_MOTION_DETECTION                        = "set-motion-detection"
 	INTERFACE_PORTOS_CAMERA_START_STREAMING                             = "start-streaming"
 	INTERFACE_PORTOS_CAMERA_STEP_PTZ                                    = "step-ptz"
+	INTERFACE_PORTOS_CAMERA_STOP_PTZ                                    = "stop-ptz"
 	INTERFACE_PORTOS_CAMERA_STOP_STREAMING                              = "stop-streaming"
 	INTERFACE_PORTOS_CHANNEL_CHANGE_CHANNEL                             = "change-channel"
 	INTERFACE_PORTOS_CHANNEL_SKIP_CHANNELS                              = "skip-channels"
@@ -628,7 +629,7 @@ const (
 
 	INTERFACE_PORTOS_CAMERA_GET_EVENT_IMAGE_MESSAGE_TYPE = "port1/systems/zero/capability-interfaces/camera/get-event-image"
 
-	INTERFACE_PORTOS_CAMERA_PTZ_CONTROL_MESSAGE_TYPE = "port1/systems/zero/capability-interfaces/camera/ptz-control"
+	INTERFACE_PORTOS_CAMERA_MOVE_PTZ_MESSAGE_TYPE = "port1/systems/zero/capability-interfaces/camera/move-ptz"
 
 	INTERFACE_PORTOS_CAMERA_PTZ_POSITION_MESSAGE_TYPE = "port1/systems/zero/capability-interfaces/camera/ptz-position"
 
@@ -637,6 +638,8 @@ const (
 	INTERFACE_PORTOS_CAMERA_START_STREAMING_MESSAGE_TYPE = "port1/systems/zero/capability-interfaces/camera/start-streaming"
 
 	INTERFACE_PORTOS_CAMERA_STEP_PTZ_MESSAGE_TYPE = "port1/systems/zero/capability-interfaces/camera/step-ptz"
+
+	INTERFACE_PORTOS_CAMERA_STOP_PTZ_MESSAGE_TYPE = "port1/systems/zero/capability-interfaces/camera/stop-ptz"
 
 	INTERFACE_PORTOS_CAMERA_STOP_STREAMING_MESSAGE_TYPE = "port1/systems/zero/capability-interfaces/camera/stop-streaming"
 
@@ -1376,17 +1379,17 @@ var MessagesTypes = map[string]MessageTypeInfo{
 		NamespaceConst:  "INTERFACE_PORTOS_CAMERA",
 	},
 
-	"port1/systems/zero/capability-interfaces/camera/ptz-control": {
-		ConstName:       "INTERFACE_PORTOS_CAMERA_PTZ_CONTROL",
+	"port1/systems/zero/capability-interfaces/camera/move-ptz": {
+		ConstName:       "INTERFACE_PORTOS_CAMERA_MOVE_PTZ",
 		Namespace:       "port1/systems/zero/capability-interfaces/camera",
-		Name:            "ptz-control",
+		Name:            "move-ptz",
 		Version:         "1.0",
 		Type:            "message",
 		Directionality:  "in",
-		Title:           "",
-		Description:     "Pan, tilt or zoom the camera. Pan and tilt range from -100 to 100, and zoom from 0 to 100.",
-		FuncName:        "CameraInterfacePtzControl",
-		PayloadTypeName: "CameraInterfacePtzControlMessage",
+		Title:           "CameraInterfaceMovePtzMessage",
+		Description:     "Start turning the camera left, right, up or down in an active camera session and keep it turning until stop-ptz, another move-ptz on the same axis, a step-ptz on that axis, or the end of the camera's range. With seconds the provider stops the camera after that time and answers once it has stopped. Without seconds the provider answers as soon as the camera turns, and stops it once it has had time to reach the end of its range. A pan move and a tilt move can run at the same time. The provider answers with a ptz-position message estimated from how long and how fast the camera turned. The session must belong to the same authorized caller and endpoint.",
+		FuncName:        "CameraInterfaceMovePtz",
+		PayloadTypeName: "CameraInterfaceMovePtzMessage",
 		NamespaceConst:  "INTERFACE_PORTOS_CAMERA",
 	},
 
@@ -1398,7 +1401,7 @@ var MessagesTypes = map[string]MessageTypeInfo{
 		Type:            "message",
 		Directionality:  "out",
 		Title:           "CameraInterfacePtzPositionMessage",
-		Description:     "Where a pan-tilt camera points after a step-ptz request, estimated from the steps the provider has sent in this camera session. Pan counts degrees to the right of panReference and tilt counts degrees up from tiltReference. A reference is the end of the range once the camera has been turned to that end in this session, and the session start before that.",
+		Description:     "Where a pan-tilt camera points after a step-ptz, move-ptz or stop-ptz request, estimated from the steps the provider has sent and how long and how fast the camera has turned in this camera session. Pan counts degrees to the right of panReference and tilt counts degrees up from tiltReference. A reference is the end of the range once the camera has been turned to that end in this session, and the session start before that.",
 		FuncName:        "CameraInterfacePtzPosition",
 		PayloadTypeName: "CameraInterfacePtzPositionMessage",
 		NamespaceConst:  "INTERFACE_PORTOS_CAMERA",
@@ -1440,9 +1443,23 @@ var MessagesTypes = map[string]MessageTypeInfo{
 		Type:            "message",
 		Directionality:  "in",
 		Title:           "CameraInterfaceStepPtzMessage",
-		Description:     "Turn the camera left, right, up or down in an active camera session, by one provider-defined step or by about the given number of degrees. The provider rounds degrees to whole steps and stops at the end of the camera's range, so 360 turns the camera to that end. The provider answers with a ptz-position message saying where the camera now points. This does not select an absolute position, initiate continuous movement or provide zoom. The session must belong to the same authorized caller and endpoint.",
+		Description:     "Turn the camera left, right, up or down in an active camera session, by one provider-defined step or by about the given number of degrees. The provider rounds degrees to whole steps and stops at the end of the camera's range, so 360 turns the camera to that end. The provider answers with a ptz-position message saying where the camera now points. A step-ptz first stops a move-ptz turn on the same axis. This does not select an absolute position or provide zoom. The session must belong to the same authorized caller and endpoint.",
 		FuncName:        "CameraInterfaceStepPtz",
 		PayloadTypeName: "CameraInterfaceStepPtzMessage",
+		NamespaceConst:  "INTERFACE_PORTOS_CAMERA",
+	},
+
+	"port1/systems/zero/capability-interfaces/camera/stop-ptz": {
+		ConstName:       "INTERFACE_PORTOS_CAMERA_STOP_PTZ",
+		Namespace:       "port1/systems/zero/capability-interfaces/camera",
+		Name:            "stop-ptz",
+		Version:         "1.0",
+		Type:            "message",
+		Directionality:  "in",
+		Title:           "CameraInterfaceStopPtzMessage",
+		Description:     "Stop a turn that move-ptz started in an active camera session. Stopping an axis that is not turning changes nothing. The provider answers with a ptz-position message saying where the camera stopped. The session must belong to the same authorized caller and endpoint.",
+		FuncName:        "CameraInterfaceStopPtz",
+		PayloadTypeName: "CameraInterfaceStopPtzMessage",
 		NamespaceConst:  "INTERFACE_PORTOS_CAMERA",
 	},
 
@@ -4805,9 +4822,9 @@ func NewCameraInterfaceGetEventImageMessage(payload CameraInterfaceGetEventImage
 	}
 }
 
-// NewCameraInterfacePtzControlMessage creates a new ptz-control message
-func NewCameraInterfacePtzControlMessage(payload CameraInterfacePtzControlMessage) Message {
-	messageType := INTERFACE_PORTOS_CAMERA_PTZ_CONTROL_MESSAGE_TYPE
+// NewCameraInterfaceMovePtzMessage creates a new move-ptz message
+func NewCameraInterfaceMovePtzMessage(payload CameraInterfaceMovePtzMessage) Message {
+	messageType := INTERFACE_PORTOS_CAMERA_MOVE_PTZ_MESSAGE_TYPE
 	bodyData, _ := json.Marshal(payload)
 	var body map[string]interface{}
 	json.Unmarshal(bodyData, &body)
@@ -4815,7 +4832,7 @@ func NewCameraInterfacePtzControlMessage(payload CameraInterfacePtzControlMessag
 		Type: &messageType,
 		Header: &MessageHeader{
 			Namespace: INTERFACE_PORTOS_CAMERA,
-			Name:      INTERFACE_PORTOS_CAMERA_PTZ_CONTROL,
+			Name:      INTERFACE_PORTOS_CAMERA_MOVE_PTZ,
 			Version:   "1.0",
 		},
 		Body: body,
@@ -4884,6 +4901,23 @@ func NewCameraInterfaceStepPtzMessage(payload CameraInterfaceStepPtzMessage) Mes
 		Header: &MessageHeader{
 			Namespace: INTERFACE_PORTOS_CAMERA,
 			Name:      INTERFACE_PORTOS_CAMERA_STEP_PTZ,
+			Version:   "1.0",
+		},
+		Body: body,
+	}
+}
+
+// NewCameraInterfaceStopPtzMessage creates a new stop-ptz message
+func NewCameraInterfaceStopPtzMessage(payload CameraInterfaceStopPtzMessage) Message {
+	messageType := INTERFACE_PORTOS_CAMERA_STOP_PTZ_MESSAGE_TYPE
+	bodyData, _ := json.Marshal(payload)
+	var body map[string]interface{}
+	json.Unmarshal(bodyData, &body)
+	return Message{
+		Type: &messageType,
+		Header: &MessageHeader{
+			Namespace: INTERFACE_PORTOS_CAMERA,
+			Name:      INTERFACE_PORTOS_CAMERA_STOP_PTZ,
 			Version:   "1.0",
 		},
 		Body: body,

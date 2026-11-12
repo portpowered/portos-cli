@@ -164,6 +164,8 @@ func (c Router) BuildRoot() *cobra.Command {
 	msgGroup.AddCommand(NewPath("move <endpoint-id> <instructions...>", c.MoveCliCommand.Generate()))
 	msgGroup.AddCommand(NewPath("go-to-point <endpoint-id> <x> <y>", c.MoveCliCommand.GenerateGoToPoint()))
 	msgGroup.AddCommand(NewPath("step-ptz <endpoint-id> <direction>", c.MoveCliCommand.GenerateStepPTZ()))
+	msgGroup.AddCommand(NewPath("move-ptz <endpoint-id> <direction>", c.MoveCliCommand.GenerateMovePTZ()))
+	msgGroup.AddCommand(NewPath("stop-ptz <endpoint-id>", c.MoveCliCommand.GenerateStopPTZ()))
 	msgGroup.AddCommand(NewPath("list-commands <endpoint-id>", c.ListCommandsCliCommand.Generate()))
 	root.AddCommand(msgGroup)
 

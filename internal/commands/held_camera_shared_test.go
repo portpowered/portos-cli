@@ -293,7 +293,7 @@ func TestSharedHeldCameraStepsInItsOwnSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := held.StepPTZ(t.Context(), map[string]any{"direction": "LEFT", "sessionId": "somebody-else"}); err != nil {
+	if _, err := held.PTZ(t.Context(), api.INTERFACE_PORTOS_CAMERA_STEP_PTZ, map[string]any{"direction": "LEFT", "sessionId": "somebody-else"}); err != nil {
 		t.Fatal(err)
 	}
 	steps := camera.sent(api.INTERFACE_PORTOS_CAMERA_STEP_PTZ)

@@ -125,27 +125,28 @@ func (h *HeldCamera) runHold(requestID string) {
 	}
 }
 
-// StepPTZ sends camera/step-ptz for this camera's own session. A sessionId in body is replaced.
-func (h *HeldCamera) StepPTZ(ctx context.Context, body map[string]any) (*api.MessageRequest, error) {
+// PTZ sends a camera PTZ message (step-ptz, move-ptz or stop-ptz) for this camera's own session.
+// A sessionId in body is replaced.
+func (h *HeldCamera) PTZ(ctx context.Context, name string, body map[string]any) (*api.MessageRequest, error) {
 	h.mu.Lock()
 	closed := h.closed
 	h.mu.Unlock()
 	if closed {
 		return nil, errors.New("the held camera is closed")
 	}
-	stepBody := map[string]any{}
+	ptzBody := map[string]any{}
 	for key, value := range body {
-		stepBody[key] = value
+		ptzBody[key] = value
 	}
-	stepBody["sessionId"] = h.params.SessionID
-	messageType := api.INTERFACE_PORTOS_CAMERA + "/" + api.INTERFACE_PORTOS_CAMERA_STEP_PTZ
+	ptzBody["sessionId"] = h.params.SessionID
+	messageType := api.INTERFACE_PORTOS_CAMERA + "/" + name
 	sync := api.SyncResponseType
 	return h.recorder.apiClient.Messages().Send(ctx, &api.CreateMessageRequest{
 		Target: api.CreateMessageTarget{Type: api.EndpointTarget, Id: h.params.EndpointID},
 		Message: api.Message{
 			Type:   &messageType,
-			Header: &api.MessageHeader{Namespace: api.INTERFACE_PORTOS_CAMERA, Name: api.INTERFACE_PORTOS_CAMERA_STEP_PTZ, Version: "1.0"},
-			Body:   stepBody,
+			Header: &api.MessageHeader{Namespace: api.INTERFACE_PORTOS_CAMERA, Name: name, Version: "1.0"},
+			Body:   ptzBody,
 		},
 		ResponseType: &sync,
 	}, uuid.NewString())

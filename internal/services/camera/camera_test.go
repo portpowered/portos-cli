@@ -30,7 +30,7 @@ type fakeStream struct {
 	steps   []map[string]any
 }
 
-func (f *fakeStream) StepPTZ(_ context.Context, body map[string]any) (*api.MessageRequest, error) {
+func (f *fakeStream) PTZ(_ context.Context, _ string, body map[string]any) (*api.MessageRequest, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.steps = append(f.steps, body)
@@ -422,9 +422,9 @@ func TestSharedHoldRefusesPlayAudioButStillSteps(t *testing.T) {
 	if len(opener.stream(0).played) != 0 {
 		t.Fatal("a clip reached a shared stream")
 	}
-	reply, err := svc.StepPTZ(t.Context(), "hold-1", map[string]any{"direction": "LEFT"})
+	reply, err := svc.PTZ(t.Context(), "hold-1", "step-ptz", map[string]any{"direction": "LEFT"})
 	if err != nil || reply.Id != "step-1" {
-		t.Fatalf("StepPTZ = %+v, %v", reply, err)
+		t.Fatalf("PTZ = %+v, %v", reply, err)
 	}
 	if steps := opener.stream(0).steps; len(steps) != 1 || steps[0]["direction"] != "LEFT" {
 		t.Fatalf("steps = %v", steps)

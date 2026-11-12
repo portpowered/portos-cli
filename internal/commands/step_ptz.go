@@ -55,10 +55,8 @@ func parseStepDirection(text string) (api.CameraInterfaceStepPtzMessageDirection
 	return "", exitcode.NewInvalidArgument(fmt.Errorf("direction %q is not one of %s", text, strings.Join(names, ", ")))
 }
 
-// StepPTZ moves a camera one pan or tilt step. A step needs the caller's own camera session, which
-// only a camera hold has: the host sends the step in the hold's session and fills the session ID,
-// so the command takes the hold's lease. Without a live hold behind the lease the step is refused
-// with hold_lease_required instead of opening a camera session of its own.
+// StepPTZ moves a camera by one pan or tilt step or by about params.Degrees, in the session of the
+// camera hold behind the lease (see sendPTZ).
 func (c *MoveCommand) StepPTZ(ctx context.Context, params StepPTZParams) error {
 	if params.EndpointID == "" {
 		return errors.New("endpoint ID is required")
@@ -74,40 +72,53 @@ func (c *MoveCommand) StepPTZ(ctx context.Context, params StepPTZParams) error {
 	if params.Degrees != 0 {
 		body["degrees"] = params.Degrees
 	}
-	sender, err := c.resolver.For(ctx, params.EndpointID, api.INTERFACE_PORTOS_CAMERA, api.INTERFACE_PORTOS_CAMERA_STEP_PTZ)
+	position, err := c.sendPTZ(ctx, params.EndpointID, api.INTERFACE_PORTOS_CAMERA_STEP_PTZ, body)
 	if err != nil {
 		return err
-	}
-	if !transport.Held(sender) {
-		return &apiclient.MessageRequestFailed{Request: messages.Refusal(time.Now(), params.EndpointID, holds.CodeHoldLeaseRequired,
-			"step-ptz moves the camera in your own camera session; hold the camera with `port session hold --camera` and pass its lease")}
-	}
-	messageType := api.INTERFACE_PORTOS_CAMERA + "/" + api.INTERFACE_PORTOS_CAMERA_STEP_PTZ
-	sync := api.SyncResponseType
-	response, err := sender.Send(ctx, &api.CreateMessageRequest{
-		Target: api.CreateMessageTarget{Type: api.EndpointTarget, Id: params.EndpointID},
-		Message: api.Message{
-			Type:   &messageType,
-			Header: &api.MessageHeader{Namespace: api.INTERFACE_PORTOS_CAMERA, Name: api.INTERFACE_PORTOS_CAMERA_STEP_PTZ, Version: "1.0"},
-			Body:   body,
-		},
-		ResponseType: &sync,
-	}, uuid.NewString())
-	if err != nil {
-		return fmt.Errorf("step-ptz: %w", err)
-	}
-	if err := messageRequestFailure(response); err != nil {
-		return fmt.Errorf("step-ptz: %w", err)
-	}
-	position, err := ptzPosition(response)
-	if err != nil {
-		return fmt.Errorf("step-ptz: %w", err)
 	}
 	result := StepPTZResult{EndpointID: params.EndpointID, Direction: string(direction), Degrees: params.Degrees, Position: position}
 	if c.formatter.IsJSON() {
 		return c.formatter.Print(result)
 	}
 	return c.formatter.Print(describeStepPTZ(result))
+}
+
+// sendPTZ sends a camera PTZ message (step-ptz, move-ptz or stop-ptz) through the camera hold
+// behind the lease and returns the provider's ptz-position answer. PTZ needs the caller's own
+// camera session, which only a camera hold has: the host sends the message in the hold's session
+// and fills the session ID. Without a live hold behind the lease it is refused with
+// hold_lease_required instead of opening a camera session of its own.
+func (c *MoveCommand) sendPTZ(ctx context.Context, endpointID, name string, body map[string]any) (*api.CameraInterfacePtzPositionMessage, error) {
+	sender, err := c.resolver.For(ctx, endpointID, api.INTERFACE_PORTOS_CAMERA, name)
+	if err != nil {
+		return nil, err
+	}
+	if !transport.Held(sender) {
+		return nil, &apiclient.MessageRequestFailed{Request: messages.Refusal(time.Now(), endpointID, holds.CodeHoldLeaseRequired,
+			name+" turns the camera in your own camera session; hold the camera with `port session hold --camera` and pass its lease")}
+	}
+	messageType := api.INTERFACE_PORTOS_CAMERA + "/" + name
+	sync := api.SyncResponseType
+	response, err := sender.Send(ctx, &api.CreateMessageRequest{
+		Target: api.CreateMessageTarget{Type: api.EndpointTarget, Id: endpointID},
+		Message: api.Message{
+			Type:   &messageType,
+			Header: &api.MessageHeader{Namespace: api.INTERFACE_PORTOS_CAMERA, Name: name, Version: "1.0"},
+			Body:   body,
+		},
+		ResponseType: &sync,
+	}, uuid.NewString())
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", name, err)
+	}
+	if err := messageRequestFailure(response); err != nil {
+		return nil, fmt.Errorf("%s: %w", name, err)
+	}
+	position, err := ptzPosition(response)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", name, err)
+	}
+	return position, nil
 }
 
 // ptzPosition reads the provider's ptz-position answer from a step's reply, or nil without one.
@@ -136,15 +147,27 @@ func describeStepPTZ(result StepPTZResult) string {
 	if p == nil {
 		return fmt.Sprintf("Stepped %s %s; the camera reported no position", result.EndpointID, result.Direction)
 	}
+	return fmt.Sprintf("Turned %s %s %.0f°. Now %s.", result.EndpointID, result.Direction, p.MovedDegrees, describePosition(p))
+}
+
+// describePosition says where the camera points, in words an agent can plan the next move from,
+// and which axes are still turning.
+func describePosition(p *api.CameraInterfacePtzPositionMessage) string {
 	pan := fmt.Sprintf("pan %.0f° right of the left end (range 0 to %.0f°)", p.PanDegrees, p.PanRangeDegrees)
 	if p.PanReference != api.CameraInterfacePtzPositionMessagePanReferenceLEFTEND {
 		pan = fmt.Sprintf("pan %s the session start (left end unknown until you turn to an end)", signedDegrees(p.PanDegrees, "right of", "left of"))
+	}
+	if p.PanMoving {
+		pan += ", still turning"
 	}
 	tilt := fmt.Sprintf("tilt %.0f° up from the bottom end (range 0 to %.0f°)", p.TiltDegrees, p.TiltRangeDegrees)
 	if p.TiltReference != api.CameraInterfacePtzPositionMessageTiltReferenceBOTTOMEND {
 		tilt = fmt.Sprintf("tilt %s the session start (bottom end unknown until you turn to an end)", signedDegrees(p.TiltDegrees, "above", "below"))
 	}
-	return fmt.Sprintf("Turned %s %s %.0f°. Now %s, %s.", result.EndpointID, result.Direction, p.MovedDegrees, pan, tilt)
+	if p.TiltMoving {
+		tilt += ", still turning"
+	}
+	return pan + ", " + tilt
 }
 
 // signedDegrees words a signed angle: "15° right of" or "15° left of".

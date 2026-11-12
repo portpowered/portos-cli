@@ -32,12 +32,13 @@ type Mover interface {
 }
 
 // Camera serves a hold's camera: its newest frame as JPEG, Ogg/Opus clips
-// played on its talkback track, and PTZ steps in its own session.
+// played on its talkback track, and PTZ moves in its own session.
 type Camera interface {
 	Snapshot(ctx context.Context, holdID string) (jpeg []byte, capturedAt time.Time, err error)
 	PlayAudio(ctx context.Context, holdID string, ogg []byte) (time.Duration, error)
-	// StepPTZ sends camera/step-ptz with the hold's session ID filled in and returns the reply from Port OS.
-	StepPTZ(ctx context.Context, holdID string, body map[string]any) (*api.MessageRequest, error)
+	// PTZ sends a camera PTZ message (step-ptz, move-ptz or stop-ptz) with the hold's session ID
+	// filled in and returns the reply from Port OS.
+	PTZ(ctx context.Context, holdID, name string, body map[string]any) (*api.MessageRequest, error)
 }
 
 // Service dispatches one message sent to the host.
@@ -79,7 +80,7 @@ func (s *service) Dispatch(ctx context.Context, lease string, req *api.CreateMes
 	case api.INTERFACE_PORTOS_MEDIA_PLAYER:
 		return s.playAudio(ctx, lease, endpoint, header.Name, req.Message.Body)
 	case api.INTERFACE_PORTOS_CAMERA:
-		return s.stepPTZ(ctx, lease, endpoint, header.Name, req.Message.Body)
+		return s.ptz(ctx, lease, endpoint, header.Name, req.Message.Body)
 	case api.INTERFACE_PORTOS_RTC_SESSION:
 		return s.refuse(endpoint, holds.CodeHoldOwnsSession, "the hold owns the camera session; record it with port message record and the lease, or release the hold first"), nil
 	case api.INTERFACE_PORTOS_REMOTE_CONTROL:
@@ -147,16 +148,18 @@ func (s *service) goToPoint(ctx context.Context, lease, endpoint string, body ma
 	return nil, fmt.Errorf("messages: go-to-point: %w", err)
 }
 
-// stepPTZ sends camera/step-ptz in the held camera's own session, so the caller never
-// handles the session ID. The reply is Port OS's, unchanged.
-func (s *service) stepPTZ(ctx context.Context, lease, endpoint, name string, body map[string]any) (*api.MessageRequest, error) {
-	if name != api.INTERFACE_PORTOS_CAMERA_STEP_PTZ {
-		return s.refuse(endpoint, holds.CodeNotServedByHold, "the hold serves only step-ptz of the camera messages; send "+name+" without the lease"), nil
+// ptz sends a camera PTZ message (step-ptz, move-ptz or stop-ptz) in the held camera's own
+// session, so the caller never handles the session ID. The reply is Port OS's, unchanged.
+func (s *service) ptz(ctx context.Context, lease, endpoint, name string, body map[string]any) (*api.MessageRequest, error) {
+	switch name {
+	case api.INTERFACE_PORTOS_CAMERA_STEP_PTZ, api.INTERFACE_PORTOS_CAMERA_MOVE_PTZ, api.INTERFACE_PORTOS_CAMERA_STOP_PTZ:
+	default:
+		return s.refuse(endpoint, holds.CodeNotServedByHold, "the hold serves only step-ptz, move-ptz and stop-ptz of the camera messages; send "+name+" without the lease"), nil
 	}
 	hold, err := s.auth.Authorize(lease, endpoint, holds.KindCamera)
 	if err == nil {
 		var reply *api.MessageRequest
-		if reply, err = s.camera.StepPTZ(ctx, hold.ID, body); err == nil {
+		if reply, err = s.camera.PTZ(ctx, hold.ID, name, body); err == nil {
 			return reply, nil
 		}
 	}
@@ -164,7 +167,7 @@ func (s *service) stepPTZ(ctx context.Context, lease, endpoint, name string, bod
 	if errors.As(err, &holdErr) {
 		return s.refuse(endpoint, holdErr.Code, holdErr.Message), nil
 	}
-	return nil, fmt.Errorf("messages: step-ptz: %w", err)
+	return nil, fmt.Errorf("messages: %s: %w", name, err)
 }
 
 // snapshot serves get-snapshot from the held camera. The image is always
