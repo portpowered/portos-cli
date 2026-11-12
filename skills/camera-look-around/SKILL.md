@@ -78,7 +78,7 @@ Angles from `step-ptz` are counted from the steps the camera made, rounded to wh
 | `port message record <camera> --output clip.mp4 --duration 10` | Records your hold's video (no sound) |
 | `port session release <holdId>` | Detaches |
 
-A timed `move-ptz` answers about when its `--seconds` are up, so a nudge of 0.3 seconds is done in well under a second. A run to an end answers once the camera has had time to get there from anywhere, up to about 20 seconds. A `step-ptz` takes about a second per 15 degrees, because the camera drops a step that comes too soon after the last one. Wait for each command's answer before the next on the same axis. To pan and tilt at once, start one axis with `move-ptz` without `--seconds` and send the timed move on the other.
+A timed `move-ptz` answers about when its `--seconds` are up, so a nudge of 0.3 seconds is done in well under a second. A run to an end answers once the camera has had time to get there from anywhere: about 13 seconds for pan and 6 for tilt. A `step-ptz` takes about a second per 15 degrees, because the camera drops a step that comes too soon after the last one. Wait for each command's answer before the next on the same axis. To pan and tilt at once, start one axis with `move-ptz` without `--seconds` and send the timed move on the other.
 
 ## Recipes
 
