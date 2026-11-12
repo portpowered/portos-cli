@@ -46,6 +46,10 @@ const (
 	// ReasonSessionExpired ends a shared camera hold at its session's expiry: a shared
 	// session is not renewed past the time Port OS gave it.
 	ReasonSessionExpired Reason = "session_expired"
+	// ReasonSessionClosed ends a shared camera hold whose session closed for every viewer before
+	// its expiry, for example when the camera ends its live view (Ring does after about 12 minutes).
+	// Holding the camera again opens a new session.
+	ReasonSessionClosed Reason = "session_closed"
 )
 
 // State is where a hold is in its life.

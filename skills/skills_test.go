@@ -44,7 +44,7 @@ func TestRobotNavigationHelper(t *testing.T) {
 // fails here until the skill follows.
 var skillCommands = map[string][]string{
 	"robot-navigation":   {"port session hold", "port session release", "port message go-to-point"},
-	"camera-look-around": {"port session hold", "--shared", "port message step-ptz", "port message snapshot", "port session release", "hold_lease_required", "shared_hold_no_talkback", "session_expired"},
+	"camera-look-around": {"port session hold", "--shared", "port message step-ptz", "port message snapshot", "port session release", "hold_lease_required", "shared_hold_no_talkback", "session_expired", "session_closed"},
 }
 
 // TestSkillsAreRegistered checks every skill directory has a SKILL.md whose front matter names the

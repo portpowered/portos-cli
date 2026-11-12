@@ -390,7 +390,7 @@ func TestSharedStreamEndedByItsSessionHoldIsReportedWithThatReason(t *testing.T)
 		want  holds.Reason
 	}{
 		{string(api.EXPIRED), holds.ReasonSessionExpired},
-		{string(api.SESSIONCLOSED), holds.ReasonPreempted},
+		{string(api.SESSIONCLOSED), holds.ReasonSessionClosed},
 		{string(api.DETACHED), holds.ReasonPreempted},
 	} {
 		opener, _, svc, lost := newTestService(t)

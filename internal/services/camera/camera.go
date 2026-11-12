@@ -224,13 +224,16 @@ func (s *service) watch(holdID string, stream Stream) {
 }
 
 // endOf says why a stream that stopped on its own did. A shared stream knows the reason its
-// session hold ended; an EXPIRED one is the session's expiry.
+// session hold ended; an EXPIRED one is the session's expiry and a SESSION_CLOSED one closed for
+// every viewer before it.
 func endOf(stream Stream) (holds.Reason, string) {
 	switch ended := stream.EndReason(); ended {
 	case "":
 		return holds.ReasonPreempted, "the camera stream was closed by the far side; another viewer may have opened the camera"
 	case string(api.EXPIRED):
 		return holds.ReasonSessionExpired, "the shared camera session reached its expiry"
+	case string(api.SESSIONCLOSED):
+		return holds.ReasonSessionClosed, "the shared camera session closed for every viewer, for example because the camera ended its live view (Ring does after about 12 minutes); hold the camera again to keep looking"
 	default:
 		return holds.ReasonPreempted, "the shared camera session ended (" + ended + ")"
 	}

@@ -1461,7 +1461,7 @@ var Commands = map[string]CommandDoc{
 				Type:        "bool",
 				Default:     "false",
 				Required:    false,
-				Description: "With --camera, attach to the endpoint's shared session, so a call and this hold watch the one camera. The hold is receive-only with no talkback (play-audio is refused as shared_hold_no_talkback, exit 12), snapshots, record and step-ptz work under the lease, and the hold ends as session_expired when the session's time runs out (about an hour from the first attach).",
+				Description: "With --camera, attach to the endpoint's shared session, so a call and this hold watch the one camera. The hold is receive-only with no talkback (play-audio is refused as shared_hold_no_talkback, exit 12), snapshots, record and step-ptz work under the lease, and the hold ends as session_expired when the session's time runs out (about an hour from the first attach) or as session_closed when the session closes for every viewer before then (a Ring camera ends its live view after about 12 minutes); hold the camera again to keep looking.",
 			},
 			{
 				Name:        "dead-man",

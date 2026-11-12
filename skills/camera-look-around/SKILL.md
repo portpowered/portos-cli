@@ -5,7 +5,7 @@ license: Apache-2.0
 compatibility: Needs the port CLI (signed in with `port auth login --device`) and a Ring camera on the account. Snapshots need ffmpeg on PATH.
 metadata:
   author: Port OS Team
-  last modified: 2026, november, 11
+  last modified: 2026, november, 12
 ---
 
 # Camera look around
@@ -18,7 +18,7 @@ A Ring camera allows one live view at a time. When a call already holds it, a pl
 2. **Look and step only through `port`, with the lease.** Snapshots and steps come from your hold. A step without the lease is refused (exit 13, `hold_lease_required`), because a step moves the camera in your own session.
 3. **Step, then snapshot, then judge.** One step is a small turn. After each step take a snapshot and describe what changed before you step again. Do not chain steps blind.
 4. **You cannot speak.** A shared hold has no talkback: the call owns the speaker. `port message play-audio` is refused (exit 12, `shared_hold_no_talkback`). Leave the speaking to the call.
-5. **The hold ends by itself.** A shared session lasts about an hour from the first attach and is not renewed past that. `port session status --json` shows `camera.expiresAt`. At the end the hold becomes `ended` with reason `session_expired`. The hold also ends when the call's session is closed or the camera is taken away.
+5. **The hold ends by itself.** A Ring camera ends its live view after about 12 minutes, which closes the shared session for every viewer, the call included. Your hold then becomes `ended` with reason `session_closed`. If you still need to look, hold the camera again (rule 1) and export the new lease; the new session starts another 12 minutes. A session that runs to its own expiry (`camera.expiresAt` in `port session status --json`) ends with `session_expired`, and one whose camera is taken away ends with `preempted`. Check `port session status --json` whenever a command answers `hold_ended` or `camera_unavailable`.
 6. **Always release at the end.** `port session release <holdId>` detaches you. The call keeps its live view. The camera closes about 30 seconds after the last viewer leaves.
 
 ## Commands
@@ -54,7 +54,7 @@ Describe each snapshot in words and say what moved between two of them. Steps ar
 | Exit | Code | Meaning and what to do |
 | --- | --- | --- |
 | 13 | `hold_lease_required` | The step or snapshot had no lease. Pass `--lease` or set `PORTOS_LEASE` |
-| 13 | `hold_ended` | The hold ended (see `port session status`). Hold the camera again |
+| 13 | `hold_ended` | The hold ended. `port session status --json` gives the reason; after `session_closed` or `session_expired`, hold the camera again |
 | 12 | `shared_hold_no_talkback` | Shared holds cannot play audio |
 | 1 | `shared_session_full` or `shared_audio_publisher_busy` | At most four viewers share one camera; try again after one leaves |
 | 14 | `camera_unavailable` | The shared session ended under you. Release and hold the camera again |
