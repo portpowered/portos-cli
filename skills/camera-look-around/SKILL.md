@@ -32,7 +32,9 @@ mkdir -p ~/camera/notes
 cp -rn "portos-cli-${VERSION#v}/skills/camera-look-around/tricks" ~/camera/
 ```
 
-`~/camera/tricks/lib/portos_camera.py` is the starter helper (a `Camera` class with `move`, `stop`, `to_end`, `glide`, `turn`, `anchor`, `look_at`, `snapshot`, `panorama`, `gesture`, `patrol` and `follow`). The example tricks are `panorama`, `look-at`, `gesture`, `patrol` and `follow`. All of them are yours to improve.
+`~/camera/tricks/lib/portos_camera.py` is the starter helper (a `Camera` class with `move`, `stop`, `to_end`, `glide`, `glide_to`, `level`, `turn`, `anchor`, `look_at`, `snapshot`, `panorama`, `gesture`, `patrol` and `follow`). The example tricks are `panorama`, `look-at`, `gesture`, `patrol` and `follow`. All of them are yours to improve.
+
+`cp -n` keeps the files you already have, so your own changes survive. After updating the CLI, run `diff -r` between the new `tricks` and `~/camera/tricks`, and copy over every file you have not changed yourself, the helper above all.
 
 ## The rules
 
@@ -163,14 +165,14 @@ On a call the camera is the part of you people can see move, so you can answer w
 | "Look to the sky" | `port message move-ptz "$CAM" UP --seconds 60` | About 7 s; the ceiling fills the view |
 | "Nod" | `python3 ~/camera/tricks/gesture/run.py "$CAM" nod` | About 4 s |
 | "Shake your head" | `python3 ~/camera/tricks/gesture/run.py "$CAM" shake` | About 3 s |
-| "Jiggle a bit" | `python3 ~/camera/tricks/gesture/run.py "$CAM" jiggle` | About 3 s |
+| "Jiggle a bit" | `python3 ~/camera/tricks/gesture/run.py "$CAM" jiggle` | About 3 s, 4 s next to an end |
 | "Look up and down" | `python3 ~/camera/tricks/gesture/run.py "$CAM" look-up-down` | About 6 s |
 | "Patrol" (check left, middle, right) | `python3 ~/camera/tricks/patrol/run.py "$CAM" --out patrol/` | About 24 s, plus 13 s to anchor pan the first time; a frame at each stop |
 | "Follow my hand" | `python3 ~/camera/tricks/follow/run.py "$CAM" --seconds 30 --out follow/` | As long as you ask |
 
 A gesture ends about where it started, so the angles in your notes stay valid. Next to an end it first turns away far enough to have room, and turns back after. Play a gesture once per line (`--times 2` for an eager one) and never loop it.
 
-Come back to eye level before a gesture or a follow: a nod at the ceiling looks like nothing to the person watching. If you looked to the sky, run `move-ptz DOWN --seconds 1.5` first, or turn to the tilt you noted for faces.
+Come back to eye level before a gesture or a follow: a nod at the ceiling looks like nothing to the person watching. Note the tilt that frames faces once, then come back to it with `Camera.level(tilt)` in the helper: it runs to the bottom end and glides up from there, about 6 s. Positions come from how long each turn ran, so after a long turn, a look to the sky above all, gliding straight to a noted tilt can land well off it. Check the snapshot either way.
 
 A patrol checks 90 degrees either side of the middle of the pan range (`--spread` changes it) and ends at the middle. Its two ends are far from the camera's own ends, which look at almost the same wall on a camera that turns nearly all the way round.
 

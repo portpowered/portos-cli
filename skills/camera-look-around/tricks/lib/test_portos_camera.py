@@ -254,6 +254,23 @@ class CameraCalls(unittest.TestCase):
         self.assertEqual(len(self.port.calls), 1 + len(GESTURES["nod"]) + 2)
         self.assertAlmostEqual(self.port.tilt, 0.0)
 
+    def test_patrol_reads_the_position_and_keeps_an_anchored_pan(self):
+        self.port.rate = TURN_RATES["PAN"]
+        self.port.pan, self.port.pan_known = PAN_RANGE / 2, True
+        with tempfile.TemporaryDirectory() as out:
+            Camera("cam", self.port, self.log).patrol(out)
+        self.assertEqual(self.port.calls[0], ["message", "stop-ptz", "cam"])
+        self.assertNotIn(str(TO_END_SECONDS), [call[-1] for call in self.port.calls])
+
+    def test_level_runs_to_the_bottom_then_glides_up(self):
+        self.port.rate = TURN_RATES["TILT"]
+        camera = Camera("cam", self.port, self.log)
+        position = camera.level(88)
+        moves = [call[3] for call in self.port.calls if call[:2] == ["message", "move-ptz"]]
+        self.assertEqual(moves, ["DOWN", "UP"])
+        self.assertTrue(position.tilt_known)
+        self.assertAlmostEqual(self.port.tilt, 88, places=2)
+
     def test_patrol_checks_left_middle_and_right_around_the_middle(self):
         self.port.rate = TURN_RATES["PAN"]
         camera = Camera("cam", self.port, self.log)

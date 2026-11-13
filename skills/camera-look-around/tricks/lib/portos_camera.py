@@ -367,11 +367,13 @@ class Camera:
     def patrol(self, out: str, tilt: Optional[float] = None, spread: float = PATROL_SPREAD) -> List[dict]:
         """Checks left, the middle and right of the room: spread degrees left of the middle of the pan
         range, the middle, and spread degrees right of it, saving a frame at each, then turns back
-        to the middle. Anchors pan first when it is not known. The two ends of a wide pan range
+        to the middle. Anchors pan first when the session has not. The two ends of a wide pan range
         look at almost the same wall, so a patrol stays around the middle. Returns
         [{name, path, pan, tilt}]."""
         os.makedirs(out, exist_ok=True)
-        if self.position is None or not self.position.pan_known:
+        if self.position is None:
+            self.stop()
+        if not self.position.pan_known:
             self.anchor(tilt=False)
         if tilt is not None:
             self.look_at(tilt=tilt)
@@ -383,6 +385,13 @@ class Camera:
             frames.append({"name": name, "path": path, "pan": self.position.pan, "tilt": self.position.tilt})
         self.glide_to(pan=middle)
         return frames
+
+    def level(self, tilt: float) -> Position:
+        """Comes back to a tilt you noted, such as eye level: runs to the bottom end, then glides up
+        to tilt. Positions come from how long each turn ran, so after a long turn, a look to the
+        sky above all, only a fresh anchor makes a noted tilt show the same view again."""
+        self.to_end("DOWN")
+        return self.glide("UP", tilt)
 
     def glide_to(self, pan: Optional[float] = None, tilt: Optional[float] = None) -> Position:
         """Turns to absolute angles with continuous moves: faster than look_at(), within about the
