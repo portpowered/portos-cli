@@ -163,11 +163,14 @@ On a call the camera is the part of you people can see move, so you can answer w
 | "All the way left" | `port message move-ptz "$CAM" LEFT --seconds 60` | About 13 s the first time in a session, then only the distance left (about 6 s from the middle) |
 | "Look up" | `port message move-ptz "$CAM" UP --seconds 1` (a little: 0.5, clearly: 2) | About 2 s |
 | "Look to the sky" | `port message move-ptz "$CAM" UP --seconds 60` | About 7 s; the ceiling fills the view |
-| "Nod" | `python3 ~/camera/tricks/gesture/run.py "$CAM" nod` | About 4 s |
-| "Shake your head" | `python3 ~/camera/tricks/gesture/run.py "$CAM" shake` | About 3 s |
+| "Nod" | `python3 ~/camera/tricks/gesture/run.py "$CAM" nod` | About 3 s, two nods of about 16 degrees |
+| "A fast nod" | `python3 ~/camera/tricks/gesture/run.py "$CAM" quick-nod` | About 3.5 s, three small nods of about 8 degrees |
+| "A big nod" or an eager yes | `python3 ~/camera/tricks/gesture/run.py "$CAM" big-nod` | About 4.5 s, two deep nods of about 30 degrees |
+| "Shake your head" | `python3 ~/camera/tricks/gesture/run.py "$CAM" shake` | About 3 s, one shake of about 13 degrees each way |
+| "Shake your head three times" | `python3 ~/camera/tricks/gesture/run.py "$CAM" shake --times 3` | About 7 s; drifts about 2 degrees a shake |
 | "Jiggle a bit" | `python3 ~/camera/tricks/gesture/run.py "$CAM" jiggle` | About 3 s, 4 s next to an end |
 | "Look up and down" | `python3 ~/camera/tricks/gesture/run.py "$CAM" look-up-down` | About 6 s |
-| "Patrol" (check left, middle, right) | `python3 ~/camera/tricks/patrol/run.py "$CAM" --out patrol/` | About 24 s, plus 13 s to anchor pan the first time; a frame at each stop |
+| "Patrol" (check left, middle, right) | `python3 ~/camera/tricks/patrol/run.py "$CAM" --out patrol/` | About 16 s, plus 13 s to anchor pan the first time; a frame at each stop |
 | "Follow my hand" | `python3 ~/camera/tricks/follow/run.py "$CAM" --seconds 30 --out follow/` | As long as you ask |
 
 A gesture ends about where it started, so the angles in your notes stay valid. Next to an end it first turns away far enough to have room, and turns back after. Play a gesture once per line (`--times 2` for an eager one) and never loop it.
@@ -182,6 +185,7 @@ The tricks run `port` from PATH. If `port` lives somewhere else, such as `~/bin/
 
 - "Hey, are you awake?" Then nod, as if you are checking in.
 - A yes: nod. A no: shake. Happy, hello or a joke that landed: jiggle.
+- "Mm-hm, I'm listening": quick-nod. "YES! Absolutely!": big-nod. "No no no": shake `--times 3`.
 - Curious or thinking: look up and down, or look to the sky while you think and then come back down.
 - On a patrol, name each stop as you check it: "Left side: all clear. The middle: the sofa, nobody on it. Right side: the door is shut." Look at each frame before you say it.
 

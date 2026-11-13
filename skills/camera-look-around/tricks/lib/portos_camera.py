@@ -52,9 +52,13 @@ VIEW_DEGREES = (130.0, 64.0)
 # Gestures: short timed turns, (direction, seconds), that end about where they started. A stroke
 # under 0.2 s barely shows; each answers in about half a second once the camera has stopped. Every
 # stroke overruns by the time its stop takes to reach the camera, so each gesture has as many
-# strokes one way as the other and the overruns cancel.
+# strokes one way as the other and the overruns cancel. Each stroke waits for the camera to stop
+# before the next: sent back to back, Ring once dropped a reversal and the camera ran 40 degrees on
+# while the plugin counted it as still.
 GESTURES = {
     "nod": [("DOWN", 0.4), ("UP", 0.4), ("DOWN", 0.4), ("UP", 0.4)],
+    "quick-nod": [("DOWN", 0.2), ("UP", 0.2)] * 3,
+    "big-nod": [("DOWN", 0.8), ("UP", 0.8), ("DOWN", 0.8), ("UP", 0.8)],
     "shake": [("LEFT", 0.3), ("RIGHT", 0.3), ("RIGHT", 0.3), ("LEFT", 0.3)],
     "jiggle": [("LEFT", 0.25), ("RIGHT", 0.25), ("RIGHT", 0.25), ("LEFT", 0.25)],
     "look-up-down": [("UP", 1.0), ("DOWN", 1.0), ("DOWN", 1.0), ("UP", 1.0)],
@@ -233,9 +237,18 @@ class Port:
         """Runs a command with --json and returns its output, raising the typed error on failure."""
         code, out, err = self.run(list(args) + ["--json"])
         if code != 0:
-            lines = [line for line in (err or out).strip().splitlines() if line.strip()]
-            raise _ERRORS.get(code, CameraError)(code, lines[-1] if lines else "port exited %d" % code)
+            raise _ERRORS.get(code, CameraError)(code, error_detail(err or out) or "port exited %d" % code)
         return json.loads(out) if out.strip() else {}
+
+
+def error_detail(text: str) -> str:
+    """The message of a failed command's output: error.message from its --json error body, or its
+    last line when the output is not JSON."""
+    try:
+        return str(json.loads(text)["error"]["message"])
+    except (ValueError, KeyError, TypeError):
+        lines = [line for line in text.strip().splitlines() if line.strip()]
+        return lines[-1] if lines else ""
 
 
 class Camera:
@@ -354,7 +367,7 @@ class Camera:
         return self.move(direction, degrees / TURN_RATES[axis_of(direction)])
 
     def gesture(self, name: str) -> Position:
-        """Plays one of GESTURES (nod, shake, jiggle, look-up-down). The camera ends about where it
+        """Plays one of GESTURES (nod, quick-nod, big-nod, shake, jiggle, look-up-down). The camera ends about where it
         started; next to an end it first turns away far enough for the gesture, and comes back
         after. Without a position yet it asks for one first (stop-ptz turns nothing when nothing
         turns)."""

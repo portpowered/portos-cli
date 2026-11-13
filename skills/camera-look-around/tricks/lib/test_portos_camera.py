@@ -8,7 +8,7 @@ import tempfile
 import unittest
 
 from portos_camera import (
-    GESTURES, PATROL_SPREAD, TO_END, TO_END_SECONDS, TURN_RATES, Camera, CameraError, HoldProblem, Position, fit_gesture,
+    GESTURES, PATROL_SPREAD, Port, TO_END, TO_END_SECONDS, TURN_RATES, Camera, CameraError, HoldProblem, Position, fit_gesture,
     follow_turns, motion_center, scan_angles, turns_to,
 )
 
@@ -53,6 +53,17 @@ class Gestures(unittest.TestCase):
             self.assertEqual(count.get("LEFT", 0), count.get("RIGHT", 0), name)
             self.assertEqual(count.get("UP", 0), count.get("DOWN", 0), name)
 
+    def test_every_gesture_stroke_is_long_enough_to_show(self):
+        for name, strokes in GESTURES.items():
+            for _, seconds in strokes:
+                self.assertGreaterEqual(seconds, 0.2, name)
+
+    def test_a_big_nod_at_the_bottom_end_turns_up_far_enough_first(self):
+        nod = fit_gesture(GESTURES["big-nod"], known(170, 0))
+        self.assertEqual(nod[0][0], "UP")
+        self.assertAlmostEqual(nod[0][1], 0.8)
+        self.assertEqual(nod[1:-1], GESTURES["big-nod"])
+
     def test_a_gesture_next_to_an_end_turns_away_first_and_back_after(self):
         nod = fit_gesture(GESTURES["nod"], known(170, 0))
         self.assertEqual(nod[0][0], "UP")
@@ -89,6 +100,23 @@ class Following(unittest.TestCase):
         self.assertEqual(follow_turns((0.5, -0.25), view=(100, 60), gain=0.5), [("RIGHT", 25), ("UP", 8)])
         self.assertEqual(follow_turns((-0.3, 0.05), view=(100, 60), gain=1), [("LEFT", 30)])
         self.assertEqual(follow_turns((0.05, 0.05)), [])
+
+
+class JSONErrorTest(unittest.TestCase):
+    def test_a_failed_command_raises_the_message_from_its_json_error_body(self):
+        port = Port()
+        body = json.dumps({"error": {"message": "the hold ended (hold_ended)", "type": "cli_error"}}, indent=2)
+        port.run = lambda args: (13, "", body)
+        with self.assertRaises(HoldProblem) as raised:
+            port.json(["message", "stop-ptz", "cam"])
+        self.assertEqual(raised.exception.detail, "the hold ended (hold_ended)")
+
+    def test_a_failed_command_without_json_raises_its_last_line(self):
+        port = Port()
+        port.run = lambda args: (1, "", "starting\nport: no such endpoint\n")
+        with self.assertRaises(CameraError) as raised:
+            port.json(["message", "stop-ptz", "cam"])
+        self.assertEqual(raised.exception.detail, "port: no such endpoint")
 
 
 class FakePort:

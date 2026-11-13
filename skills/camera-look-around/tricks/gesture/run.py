@@ -2,7 +2,8 @@
 
     python3 tricks/gesture/run.py <camera> nod [--times 2]
 
-Gestures: nod (yes), shake (no), jiggle (a happy wiggle), look-up-down (curious). Prints one
+Gestures: nod (yes), quick-nod (mm-hm), big-nod (an eager YES), shake (no), jiggle (a happy
+wiggle), look-up-down (curious). Prints one
 checkpoint line, {"checkpoint": "gesture", "gesture": ..., "position": ...}. The hold is released
 only if this script opened it (PORTOS_LEASE unset).
 """
