@@ -8,7 +8,7 @@ import tempfile
 import unittest
 
 from portos_camera import (
-    GESTURES, TO_END, TO_END_SECONDS, TURN_RATES, Camera, CameraError, HoldProblem, Position, fit_gesture,
+    GESTURES, PATROL_SPREAD, TO_END, TO_END_SECONDS, TURN_RATES, Camera, CameraError, HoldProblem, Position, fit_gesture,
     follow_turns, motion_center, scan_angles, turns_to,
 )
 
@@ -42,18 +42,27 @@ class Planning(unittest.TestCase):
 
 
 class Gestures(unittest.TestCase):
-    def test_every_gesture_ends_where_it_started(self):
+    def test_every_gesture_ends_where_it_started_with_as_many_strokes_each_way(self):
         for name, strokes in GESTURES.items():
-            net = {"PAN": 0.0, "TILT": 0.0}
+            net, count = {"PAN": 0.0, "TILT": 0.0}, {}
             for direction, seconds in strokes:
                 axis = "TILT" if direction in ("UP", "DOWN") else "PAN"
                 net[axis] += seconds if direction in ("RIGHT", "UP") else -seconds
+                count[direction] = count.get(direction, 0) + 1
             self.assertEqual(net, {"PAN": 0.0, "TILT": 0.0}, name)
+            self.assertEqual(count.get("LEFT", 0), count.get("RIGHT", 0), name)
+            self.assertEqual(count.get("UP", 0), count.get("DOWN", 0), name)
 
-    def test_a_gesture_next_to_an_end_is_mirrored(self):
-        self.assertEqual(fit_gesture(GESTURES["nod"], known(170, 0))[0], ("UP", 0.4))
+    def test_a_gesture_next_to_an_end_turns_away_first_and_back_after(self):
+        nod = fit_gesture(GESTURES["nod"], known(170, 0))
+        self.assertEqual(nod[0][0], "UP")
+        self.assertAlmostEqual(nod[0][1], 0.4)
+        self.assertEqual(nod[1:-1], GESTURES["nod"])
+        self.assertEqual(nod[-1][0], "DOWN")
+        jiggle = fit_gesture(GESTURES["jiggle"], known(PAN_RANGE - 2, 80))
+        self.assertEqual(jiggle[0][0], "LEFT")
+        self.assertAlmostEqual(jiggle[0][1], (0.25 * TURN_RATES["PAN"] - 2) / TURN_RATES["PAN"])
         self.assertEqual(fit_gesture(GESTURES["nod"], known(170, 80)), GESTURES["nod"])
-        self.assertEqual(fit_gesture(GESTURES["jiggle"], known(2, 80))[0], ("RIGHT", 0.25))
         self.assertEqual(fit_gesture(GESTURES["nod"], None), GESTURES["nod"])
 
 
@@ -237,23 +246,26 @@ class CameraCalls(unittest.TestCase):
                          [[direction, "--seconds", "%g" % seconds] for direction, seconds in GESTURES["nod"]])
         self.assertEqual((self.port.pan, self.port.tilt), start)
 
-    def test_gesture_reads_the_position_first_and_mirrors_at_an_end(self):
+    def test_gesture_reads_the_position_first_and_makes_room_at_an_end(self):
         self.port.tilt, self.port.tilt_known = 0.0, True
         Camera("cam", self.port, self.log).gesture("nod")
         self.assertEqual(self.port.calls[0], ["message", "stop-ptz", "cam"])
         self.assertEqual(self.port.calls[1][3], "UP")
-        self.assertEqual(self.port.tilt, 0.0)
+        self.assertEqual(len(self.port.calls), 1 + len(GESTURES["nod"]) + 2)
+        self.assertAlmostEqual(self.port.tilt, 0.0)
 
-    def test_patrol_checks_left_middle_and_right(self):
+    def test_patrol_checks_left_middle_and_right_around_the_middle(self):
         self.port.rate = TURN_RATES["PAN"]
         camera = Camera("cam", self.port, self.log)
         with tempfile.TemporaryDirectory() as out:
             frames = camera.patrol(out)
             self.assertEqual([frame["name"] for frame in frames], ["left", "middle", "right"])
-            for frame, pan in zip(frames, (0, PAN_RANGE / 2, PAN_RANGE)):
+            middle = PAN_RANGE / 2
+            for frame, pan in zip(frames, (middle - PATROL_SPREAD, middle, middle + PATROL_SPREAD)):
                 self.assertAlmostEqual(frame["pan"], pan, places=2)
             for frame in frames:
                 self.assertTrue(os.path.exists(frame["path"]))
+        self.assertAlmostEqual(self.port.pan, PAN_RANGE / 2, places=2)
 
     def test_follow_turns_toward_what_moved_until_the_time_is_up(self):
         camera = Camera("cam", self.port, self.log)

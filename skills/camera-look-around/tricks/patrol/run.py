@@ -1,10 +1,11 @@
 """Patrol: check left, the middle and right, saving a frame at each.
 
-    python3 tricks/patrol/run.py <camera> --out patrol/ [--tilt 60]
+    python3 tricks/patrol/run.py <camera> --out patrol/ [--tilt 60] [--spread 90]
 
+Checks spread degrees either side of the middle of the pan range, then turns back to the middle.
 Prints one checkpoint line, {"checkpoint": "patrol", "frames": [{name, path, pan, tilt}], ...},
-for you to look at each frame. The camera stays at its right end; the hold is released only if
-this script opened it (PORTOS_LEASE unset).
+for you to look at each frame. The hold is released only if this script opened it (PORTOS_LEASE
+unset).
 """
 
 import argparse
@@ -14,13 +15,15 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lib"))
 
-from portos_camera import Camera, CameraError, Port  # noqa: E402
+from portos_camera import PATROL_SPREAD, Camera, CameraError, Port  # noqa: E402
 
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("camera")
     parser.add_argument("--tilt", type=float, default=None, help="tilt up from the bottom end to patrol at")
+    parser.add_argument("--spread", type=float, default=PATROL_SPREAD,
+                        help="degrees either side of the middle to check")
     parser.add_argument("--out", default="patrol", help="directory for the frames")
     parser.add_argument("--cli", default="port", help="the port binary")
     parser.add_argument("--config-dir", default="", help="passed to port as --config-dir")
@@ -28,7 +31,7 @@ def main(argv=None) -> int:
 
     try:
         with Camera(args.camera, Port(args.cli, args.config_dir)) as camera:
-            frames = camera.patrol(args.out, args.tilt)
+            frames = camera.patrol(args.out, args.tilt, args.spread)
             camera.checkpoint("patrol", frames=frames)
     except CameraError as failure:
         print(json.dumps({"trick": "patrol", "ok": False, "error": str(failure)}), flush=True)

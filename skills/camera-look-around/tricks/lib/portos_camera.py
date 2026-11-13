@@ -50,14 +50,17 @@ TURN_RATES = {"PAN": 30.0, "TILT": 35.0}
 VIEW_DEGREES = (130.0, 64.0)
 
 # Gestures: short timed turns, (direction, seconds), that end about where they started. A stroke
-# under 0.2 s barely shows; each answers in about half a second once the camera has stopped.
+# under 0.2 s barely shows; each answers in about half a second once the camera has stopped. Every
+# stroke overruns by the time its stop takes to reach the camera, so each gesture has as many
+# strokes one way as the other and the overruns cancel.
 GESTURES = {
     "nod": [("DOWN", 0.4), ("UP", 0.4), ("DOWN", 0.4), ("UP", 0.4)],
-    "shake": [("LEFT", 0.3), ("RIGHT", 0.6), ("LEFT", 0.6), ("RIGHT", 0.3)],
-    "jiggle": [("LEFT", 0.25), ("RIGHT", 0.5), ("LEFT", 0.5), ("RIGHT", 0.25)],
-    "look-up-down": [("UP", 1.0), ("DOWN", 2.0), ("UP", 1.0)],
+    "shake": [("LEFT", 0.3), ("RIGHT", 0.3), ("RIGHT", 0.3), ("LEFT", 0.3)],
+    "jiggle": [("LEFT", 0.25), ("RIGHT", 0.25), ("RIGHT", 0.25), ("LEFT", 0.25)],
+    "look-up-down": [("UP", 1.0), ("DOWN", 1.0), ("DOWN", 1.0), ("UP", 1.0)],
 }
-_OPPOSITE = {"LEFT": "RIGHT", "RIGHT": "LEFT", "UP": "DOWN", "DOWN": "UP"}
+# Degrees either side of the middle of the pan range that a patrol checks.
+PATROL_SPREAD = 90.0
 
 
 class CameraError(Exception):
@@ -155,13 +158,24 @@ def room(position: Optional[Position], direction: str) -> Optional[float]:
 
 
 def fit_gesture(strokes: Sequence[Tuple[str, float]], position: Optional[Position]) -> List[Tuple[str, float]]:
-    """The gesture's strokes, mirrored when the first stroke would run into an end, so a nod at the
-    bottom end starts upward and still comes back to where it began."""
-    first, seconds = strokes[0]
-    space = room(position, first)
-    if space is not None and space < seconds * TURN_RATES[axis_of(first)]:
-        return [(_OPPOSITE[direction], length) for direction, length in strokes]
-    return list(strokes)
+    """The gesture's strokes, with a turn away from an end first (and back after) when a stroke
+    would otherwise run into it, so a nod at the bottom end still looks like a nod and the camera
+    ends where it began. An axis that is not anchored is played as it is."""
+    plan = list(strokes)
+    for axis, (up, down) in (("PAN", ("RIGHT", "LEFT")), ("TILT", ("UP", "DOWN"))):
+        below, above = room(position, down), room(position, up)
+        if below is None or above is None:
+            continue
+        rate, reach, low, high = TURN_RATES[axis], 0.0, 0.0, 0.0
+        for direction, seconds in strokes:
+            if axis_of(direction) == axis:
+                reach += seconds * rate if direction == up else -seconds * rate
+                low, high = min(low, reach), max(high, reach)
+        shift = max(-low - below, 0.0) - max(high - above, 0.0)
+        if abs(shift) >= 1:
+            away, back = (up, down) if shift > 0 else (down, up)
+            plan = [(away, abs(shift) / rate)] + plan + [(back, abs(shift) / rate)]
+    return plan
 
 
 def motion_center(before: bytes, after: bytes, width: int, height: int, threshold: int = 24,
@@ -341,31 +355,41 @@ class Camera:
 
     def gesture(self, name: str) -> Position:
         """Plays one of GESTURES (nod, shake, jiggle, look-up-down). The camera ends about where it
-        started; next to an end the gesture is mirrored so it still has room. Without a position
-        yet it asks for one first (stop-ptz turns nothing when nothing turns)."""
+        started; next to an end it first turns away far enough for the gesture, and comes back
+        after. Without a position yet it asks for one first (stop-ptz turns nothing when nothing
+        turns)."""
         if self.position is None:
             self.stop()
         for direction, seconds in fit_gesture(GESTURES[name], self.position):
             self.move(direction, seconds)
         return self.position
 
-    def patrol(self, out: str, tilt: Optional[float] = None) -> List[dict]:
-        """Checks left, the middle and right: runs to the left end, glides to the middle of the pan
-        range, then runs to the right end, saving a frame at each. Returns [{name, path, pan, tilt}]."""
+    def patrol(self, out: str, tilt: Optional[float] = None, spread: float = PATROL_SPREAD) -> List[dict]:
+        """Checks left, the middle and right of the room: spread degrees left of the middle of the pan
+        range, the middle, and spread degrees right of it, saving a frame at each, then turns back
+        to the middle. Anchors pan first when it is not known. The two ends of a wide pan range
+        look at almost the same wall, so a patrol stays around the middle. Returns
+        [{name, path, pan, tilt}]."""
         os.makedirs(out, exist_ok=True)
+        if self.position is None or not self.position.pan_known:
+            self.anchor(tilt=False)
         if tilt is not None:
             self.look_at(tilt=tilt)
+        middle = self.position.pan_range / 2
         frames = []
-        for name in ("left", "middle", "right"):
-            if name == "left":
-                self.to_end("LEFT")
-            elif name == "middle":
-                self.glide("RIGHT", self.position.pan_range / 2 - self.position.pan)
-            else:
-                self.to_end("RIGHT")
+        for name, angle in (("left", middle - spread), ("middle", middle), ("right", middle + spread)):
+            self.glide_to(pan=angle)
             path = self.snapshot(os.path.join(out, "%s.jpg" % name))
             frames.append({"name": name, "path": path, "pan": self.position.pan, "tilt": self.position.tilt})
+        self.glide_to(pan=middle)
         return frames
+
+    def glide_to(self, pan: Optional[float] = None, tilt: Optional[float] = None) -> Position:
+        """Turns to absolute angles with continuous moves: faster than look_at(), within about the
+        same 15 degrees. The axes must be anchored."""
+        for direction, degrees in turns_to(self.position, pan, tilt):
+            self.glide(direction, degrees)
+        return self.position
 
     def follow(self, seconds: float, out: str, settle: float = 0.4, frame=grey_frame) -> List[dict]:
         """Follows what moves for about seconds: takes two frames, finds where they differ, turns

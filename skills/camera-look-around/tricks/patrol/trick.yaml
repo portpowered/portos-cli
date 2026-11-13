@@ -1,7 +1,8 @@
 name: patrol
-does: Checks left, the middle and right. Runs to the left end, glides to the middle of the pan range, runs to the right end, and saves a frame at each.
+does: Checks left, the middle and right. Glides to 90 degrees left of the middle of the pan range, the middle, and 90 degrees right of it, saves a frame at each, and ends at the middle. Anchors pan first when it is not known.
 run: python3 tricks/patrol/run.py <camera> --out patrol/
 parameters:
+  spread: degrees either side of the middle to check (default 90)
   tilt: tilt angle up from the bottom end to patrol at (default where the camera already points)
   out: directory for the frames
 checkpoints:

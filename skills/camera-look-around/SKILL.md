@@ -55,7 +55,7 @@ Each `move-ptz`, `stop-ptz` and `step-ptz` reply (with `--json`, under `position
 | `panReference` | `LEFT_END` once the camera has been turned to its left or right end in this session, `SESSION_START` before that |
 | `panRangeDegrees` | Full pan travel, left end to right end |
 | `tiltDegrees`, `tiltReference`, `tiltRangeDegrees` | The same for tilt, from the bottom end (`BOTTOM_END`) |
-| `movedDegrees` | How far this turn actually went. Less than you asked means the camera stopped at an end. 0 for a `move-ptz` without `--seconds`, which answers as it starts |
+| `movedDegrees` | How far this turn actually went. Less than you asked means the camera stopped at an end. 0 for a `move-ptz` without `--seconds`, which answers as it starts. Before the axis is anchored, a run to an end answers the time it ran times the turn rate, which can be more than the distance the camera had left |
 | `panMoving`, `tiltMoving` | The axis is still turning from a `move-ptz` without `--seconds`. The angle is where it is now and keeps changing until `stop-ptz` or the end |
 
 Without `--json` the CLI prints the same as a sentence, for example `Turned ep/0abc LEFT 46°. Now pan 0° right of the left end (range 0 to 340°), tilt 15° below the session start (bottom end unknown until you turn to an end).`
@@ -159,16 +159,22 @@ On a call the camera is the part of you people can see move, so you can answer w
 | Request | Run | Takes |
 | --- | --- | --- |
 | "All the way left" | `port message move-ptz "$CAM" LEFT --seconds 60` | About 13 s the first time in a session, then only the distance left (about 6 s from the middle) |
-| "Look up" | `port message move-ptz "$CAM" UP --seconds 1` (a little: 0.5, clearly: 2) | 1 to 2 s |
+| "Look up" | `port message move-ptz "$CAM" UP --seconds 1` (a little: 0.5, clearly: 2) | About 2 s |
 | "Look to the sky" | `port message move-ptz "$CAM" UP --seconds 60` | About 7 s; the ceiling fills the view |
-| "Nod" | `python3 ~/camera/tricks/gesture/run.py "$CAM" nod` | About 3 s |
+| "Nod" | `python3 ~/camera/tricks/gesture/run.py "$CAM" nod` | About 4 s |
 | "Shake your head" | `python3 ~/camera/tricks/gesture/run.py "$CAM" shake` | About 3 s |
 | "Jiggle a bit" | `python3 ~/camera/tricks/gesture/run.py "$CAM" jiggle` | About 3 s |
-| "Look up and down" | `python3 ~/camera/tricks/gesture/run.py "$CAM" look-up-down` | About 5 s |
-| "Patrol" (check left, middle, right) | `python3 ~/camera/tricks/patrol/run.py "$CAM" --out patrol/` | About 22 s, a frame at each stop |
+| "Look up and down" | `python3 ~/camera/tricks/gesture/run.py "$CAM" look-up-down` | About 6 s |
+| "Patrol" (check left, middle, right) | `python3 ~/camera/tricks/patrol/run.py "$CAM" --out patrol/` | About 24 s, plus 13 s to anchor pan the first time; a frame at each stop |
 | "Follow my hand" | `python3 ~/camera/tricks/follow/run.py "$CAM" --seconds 30 --out follow/` | As long as you ask |
 
-A gesture ends about where it started, so the angles in your notes stay valid. Next to an end it starts the other way so it still has room. Play a gesture once per line (`--times 2` for an eager one) and never loop it.
+A gesture ends about where it started, so the angles in your notes stay valid. Next to an end it first turns away far enough to have room, and turns back after. Play a gesture once per line (`--times 2` for an eager one) and never loop it.
+
+Come back to eye level before a gesture or a follow: a nod at the ceiling looks like nothing to the person watching. If you looked to the sky, run `move-ptz DOWN --seconds 1.5` first, or turn to the tilt you noted for faces.
+
+A patrol checks 90 degrees either side of the middle of the pan range (`--spread` changes it) and ends at the middle. Its two ends are far from the camera's own ends, which look at almost the same wall on a camera that turns nearly all the way round.
+
+The tricks run `port` from PATH. If `port` lives somewhere else, such as `~/bin/port`, pass `--cli ~/bin/port` to each trick.
 
 **Act it out.** Say your line first, then move, so the gesture lands as the answer:
 
