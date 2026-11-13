@@ -1,13 +1,15 @@
 """Unit tests for portos_camera: angle planning and the camera calls, against a fake port."""
 
 import io
+import itertools
 import json
 import os
 import tempfile
 import unittest
 
 from portos_camera import (
-    TO_END, TO_END_SECONDS, Camera, CameraError, HoldProblem, Position, scan_angles, turns_to,
+    GESTURES, TO_END, TO_END_SECONDS, TURN_RATES, Camera, CameraError, HoldProblem, Position, fit_gesture,
+    follow_turns, motion_center, scan_angles, turns_to,
 )
 
 PAN_RANGE, TILT_RANGE, STEP, RATE = 340.0, 169.0, 15.0, 20.0
@@ -39,6 +41,47 @@ class Planning(unittest.TestCase):
         self.assertEqual(scan_angles(0, 60), [0.0])
 
 
+class Gestures(unittest.TestCase):
+    def test_every_gesture_ends_where_it_started(self):
+        for name, strokes in GESTURES.items():
+            net = {"PAN": 0.0, "TILT": 0.0}
+            for direction, seconds in strokes:
+                axis = "TILT" if direction in ("UP", "DOWN") else "PAN"
+                net[axis] += seconds if direction in ("RIGHT", "UP") else -seconds
+            self.assertEqual(net, {"PAN": 0.0, "TILT": 0.0}, name)
+
+    def test_a_gesture_next_to_an_end_is_mirrored(self):
+        self.assertEqual(fit_gesture(GESTURES["nod"], known(170, 0))[0], ("UP", 0.4))
+        self.assertEqual(fit_gesture(GESTURES["nod"], known(170, 80)), GESTURES["nod"])
+        self.assertEqual(fit_gesture(GESTURES["jiggle"], known(2, 80))[0], ("RIGHT", 0.25))
+        self.assertEqual(fit_gesture(GESTURES["nod"], None), GESTURES["nod"])
+
+
+class Following(unittest.TestCase):
+    WIDTH, HEIGHT = 8, 4
+
+    def frame(self, lit=()):
+        pixels = bytearray(self.WIDTH * self.HEIGHT)
+        for x, y in lit:
+            pixels[y * self.WIDTH + x] = 200
+        return bytes(pixels)
+
+    def test_motion_center_finds_the_changed_pixels(self):
+        before, after = self.frame(), self.frame([(7, 0), (7, 1)])
+        x, y = motion_center(before, after, self.WIDTH, self.HEIGHT)
+        self.assertAlmostEqual(x, 0.5)
+        self.assertLess(y, 0)
+
+    def test_motion_center_ignores_a_still_frame_and_small_noise(self):
+        self.assertIsNone(motion_center(self.frame(), self.frame(), self.WIDTH, self.HEIGHT))
+        self.assertIsNone(motion_center(self.frame(), self.frame([(3, 3)]), self.WIDTH, self.HEIGHT, least=0.1))
+
+    def test_follow_turns_toward_the_motion_by_part_of_the_offset(self):
+        self.assertEqual(follow_turns((0.5, -0.25), view=(100, 60), gain=0.5), [("RIGHT", 25), ("UP", 8)])
+        self.assertEqual(follow_turns((-0.3, 0.05), view=(100, 60), gain=1), [("LEFT", 30)])
+        self.assertEqual(follow_turns((0.05, 0.05)), [])
+
+
 class FakePort:
     """A pan-tilt camera that turns in whole steps, stops at its ends and reports ptz-position as
     the CLI prints it with --json."""
@@ -50,6 +93,7 @@ class FakePort:
         self.env = {}
         self.calls = []
         self.fail = None
+        self.rate = RATE
 
     def json(self, args):
         self.calls.append(list(args))
@@ -70,7 +114,7 @@ class FakePort:
                 return self._report(0, moving=args[3])
             seconds = float(args[args.index("--seconds") + 1])
             speed = float(args[args.index("--speed") + 1]) if "--speed" in args else 1.0
-            return self._turn(args[3], seconds * RATE * speed, seconds >= TO_END_SECONDS)
+            return self._turn(args[3], seconds * self.rate * speed, seconds >= TO_END_SECONDS)
         if args[:2] == ["message", "stop-ptz"]:
             return self._report(0)
         raise AssertionError("unexpected command %s" % args)
@@ -173,6 +217,51 @@ class CameraCalls(unittest.TestCase):
             ["--seconds", "0.1", "--speed", "1"], ["--seconds", "%g" % TO_END_SECONDS], ["--seconds", "%g" % TO_END_SECONDS]])
         self.assertEqual(camera.position.pan, PAN_RANGE)
         self.assertTrue(camera.position.pan_known)
+
+    def test_glide_turns_by_angle_in_one_move(self):
+        camera = Camera("cam", self.port, self.log)
+        camera.anchor()
+        self.port.calls.clear()
+        camera.glide("RIGHT", 60)
+        camera.glide("UP", 0.4)
+        self.assertEqual(self.port.calls, [["message", "move-ptz", "cam", "RIGHT", "--seconds", "%g" % (60 / TURN_RATES["PAN"])]])
+
+    def test_gesture_plays_its_strokes_and_comes_back(self):
+        camera = Camera("cam", self.port, self.log)
+        camera.anchor()
+        camera.glide("UP", 80)
+        start = (self.port.pan, self.port.tilt)
+        self.port.calls.clear()
+        camera.gesture("nod")
+        self.assertEqual([call[3:] for call in self.port.calls],
+                         [[direction, "--seconds", "%g" % seconds] for direction, seconds in GESTURES["nod"]])
+        self.assertEqual((self.port.pan, self.port.tilt), start)
+
+    def test_gesture_reads_the_position_first_and_mirrors_at_an_end(self):
+        self.port.tilt, self.port.tilt_known = 0.0, True
+        Camera("cam", self.port, self.log).gesture("nod")
+        self.assertEqual(self.port.calls[0], ["message", "stop-ptz", "cam"])
+        self.assertEqual(self.port.calls[1][3], "UP")
+        self.assertEqual(self.port.tilt, 0.0)
+
+    def test_patrol_checks_left_middle_and_right(self):
+        self.port.rate = TURN_RATES["PAN"]
+        camera = Camera("cam", self.port, self.log)
+        with tempfile.TemporaryDirectory() as out:
+            frames = camera.patrol(out)
+            self.assertEqual([frame["name"] for frame in frames], ["left", "middle", "right"])
+            for frame, pan in zip(frames, (0, PAN_RANGE / 2, PAN_RANGE)):
+                self.assertAlmostEqual(frame["pan"], pan, places=2)
+            for frame in frames:
+                self.assertTrue(os.path.exists(frame["path"]))
+
+    def test_follow_turns_toward_what_moved_until_the_time_is_up(self):
+        camera = Camera("cam", self.port, self.log)
+        camera.anchor()
+        frames = itertools.chain([bytes(64 * 36), bytes([0] * 63 + [200]) * 36], itertools.repeat(bytes(64 * 36)))
+        with tempfile.TemporaryDirectory() as out:
+            followed = camera.follow(0.2, out, settle=0, frame=lambda path: next(frames))
+        self.assertEqual(followed, [{"pan": self.port.pan, "tilt": 0.0, "turns": [("RIGHT", round(0.5 * 130 * 0.6))]}])
 
     def test_a_refused_hold_raises_its_typed_error(self):
         self.port.fail = HoldProblem(13, "hold_ended")

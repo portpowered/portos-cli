@@ -1,0 +1,12 @@
+name: follow
+does: Follows something that moves, such as a waving hand. It takes two frames, finds where they differ, turns part of the way toward it and looks again, for a number of seconds.
+run: python3 tricks/follow/run.py <camera> --seconds 30 --out follow/
+parameters:
+  seconds: how long to follow (default 30)
+  out: directory for the working frames
+checkpoints:
+  follow: each turn it made toward the motion, with the angle after it
+validated: never
+runs: 0
+successes: 0
+notes: []

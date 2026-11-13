@@ -1,0 +1,12 @@
+name: gesture
+does: Plays a short gesture with the camera head (nod, shake, jiggle or look-up-down) and ends about where it started. Next to an end the gesture is mirrored so it still has room.
+run: python3 tricks/gesture/run.py <camera> nod
+parameters:
+  gesture: nod (yes), shake (no), jiggle (a happy wiggle), look-up-down (curious)
+  times: how many times to play it (default 1)
+checkpoints:
+  gesture: the gesture played and where the camera ended
+validated: never
+runs: 0
+successes: 0
+notes: []

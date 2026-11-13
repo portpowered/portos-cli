@@ -28,6 +28,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from dataclasses import dataclass, asdict
 from typing import List, Optional, Sequence, Tuple
 
@@ -41,6 +42,22 @@ EXIT_CAMERA = 14
 TO_END = 360
 # A continuous move of 60 seconds, the longest there is, runs the camera to the end of its range.
 TO_END_SECONDS = 60
+# Degrees per second of a continuous turn, a little under a Ring camera's own rate. glide() turns
+# by angle with them; the angles a move reports come from the same rates.
+TURN_RATES = {"PAN": 30.0, "TILT": 35.0}
+# The camera's view in degrees, wide and tall, measured on a Ring pan-tilt camera. follow() turns
+# by these to bring what moved toward the middle of the frame.
+VIEW_DEGREES = (130.0, 64.0)
+
+# Gestures: short timed turns, (direction, seconds), that end about where they started. A stroke
+# under 0.2 s barely shows; each answers in about half a second once the camera has stopped.
+GESTURES = {
+    "nod": [("DOWN", 0.4), ("UP", 0.4), ("DOWN", 0.4), ("UP", 0.4)],
+    "shake": [("LEFT", 0.3), ("RIGHT", 0.6), ("LEFT", 0.6), ("RIGHT", 0.3)],
+    "jiggle": [("LEFT", 0.25), ("RIGHT", 0.5), ("LEFT", 0.5), ("RIGHT", 0.25)],
+    "look-up-down": [("UP", 1.0), ("DOWN", 2.0), ("UP", 1.0)],
+}
+_OPPOSITE = {"LEFT": "RIGHT", "RIGHT": "LEFT", "UP": "DOWN", "DOWN": "UP"}
 
 
 class CameraError(Exception):
@@ -118,6 +135,71 @@ def scan_angles(span: float, every: float) -> List[float]:
         return [0.0]
     count = max(1, -int(-span // every))
     return [round(span * i / count) for i in range(count + 1)]
+
+
+def axis_of(direction: str) -> str:
+    return "TILT" if direction in ("UP", "DOWN") else "PAN"
+
+
+def room(position: Optional[Position], direction: str) -> Optional[float]:
+    """Degrees the camera can still turn in direction, or None while that axis is not anchored."""
+    if position is None:
+        return None
+    if axis_of(direction) == "PAN":
+        value, span, known = position.pan, position.pan_range, position.pan_known
+    else:
+        value, span, known = position.tilt, position.tilt_range, position.tilt_known
+    if not known:
+        return None
+    return span - value if direction in ("RIGHT", "UP") else value
+
+
+def fit_gesture(strokes: Sequence[Tuple[str, float]], position: Optional[Position]) -> List[Tuple[str, float]]:
+    """The gesture's strokes, mirrored when the first stroke would run into an end, so a nod at the
+    bottom end starts upward and still comes back to where it began."""
+    first, seconds = strokes[0]
+    space = room(position, first)
+    if space is not None and space < seconds * TURN_RATES[axis_of(first)]:
+        return [(_OPPOSITE[direction], length) for direction, length in strokes]
+    return list(strokes)
+
+
+def motion_center(before: bytes, after: bytes, width: int, height: int, threshold: int = 24,
+                  least: float = 0.01) -> Optional[Tuple[float, float]]:
+    """Where two grey frames of width x height bytes differ: the centre of the changed pixels as
+    (x, y) from -0.5 (left, top) to 0.5 (right, bottom), or None when less than least of the
+    frame changed."""
+    xs, ys = [], []
+    for index, (a, b) in enumerate(zip(before, after)):
+        if abs(a - b) > threshold:
+            xs.append(index % width)
+            ys.append(index // width)
+    if len(xs) < max(1, least * width * height):
+        return None
+    return (sum(xs) / len(xs) / max(width - 1, 1) - 0.5, sum(ys) / len(ys) / max(height - 1, 1) - 0.5)
+
+
+def follow_turns(center: Tuple[float, float], view: Tuple[float, float] = VIEW_DEGREES,
+                 gain: float = 0.6, deadband: float = 0.12) -> List[Tuple[str, float]]:
+    """The turns, (direction, degrees), that bring a point at center toward the middle of the
+    frame. A gain under 1 leaves the rest to the next look, so following never overshoots; an
+    offset under deadband of the frame is left alone."""
+    plan = []
+    for offset, span, (positive, negative) in ((center[0], view[0], ("RIGHT", "LEFT")),
+                                               (center[1], view[1], ("DOWN", "UP"))):
+        if abs(offset) < deadband:
+            continue
+        plan.append((positive if offset > 0 else negative, round(abs(offset) * span * gain)))
+    return plan
+
+
+def grey_frame(path: str, width: int = 64, height: int = 36) -> bytes:
+    """The image at path as width x height grey bytes, decoded by ffmpeg."""
+    done = subprocess.run(["ffmpeg", "-v", "error", "-i", path, "-vf", "scale=%d:%d,format=gray" % (width, height),
+                           "-f", "rawvideo", "-"], capture_output=True)
+    if done.returncode != 0 or len(done.stdout) != width * height:
+        raise CameraError(0, "ffmpeg could not read %s" % path)
+    return done.stdout
 
 
 class Port:
@@ -249,6 +331,61 @@ class Camera:
             path = os.path.join(out, "pan-%03d.jpg" % round(self.position.pan))
             frames.append({"path": self.snapshot(path), "pan": self.position.pan, "tilt": self.position.tilt})
         return frames
+
+    def glide(self, direction: str, degrees: float) -> Position:
+        """Turns about degrees in one continuous move: faster than turn(), which steps, and as exact
+        as the turn rates. Answers once the camera has stopped; under a degree it does not turn."""
+        if degrees < 1:
+            return self.position
+        return self.move(direction, degrees / TURN_RATES[axis_of(direction)])
+
+    def gesture(self, name: str) -> Position:
+        """Plays one of GESTURES (nod, shake, jiggle, look-up-down). The camera ends about where it
+        started; next to an end the gesture is mirrored so it still has room. Without a position
+        yet it asks for one first (stop-ptz turns nothing when nothing turns)."""
+        if self.position is None:
+            self.stop()
+        for direction, seconds in fit_gesture(GESTURES[name], self.position):
+            self.move(direction, seconds)
+        return self.position
+
+    def patrol(self, out: str, tilt: Optional[float] = None) -> List[dict]:
+        """Checks left, the middle and right: runs to the left end, glides to the middle of the pan
+        range, then runs to the right end, saving a frame at each. Returns [{name, path, pan, tilt}]."""
+        os.makedirs(out, exist_ok=True)
+        if tilt is not None:
+            self.look_at(tilt=tilt)
+        frames = []
+        for name in ("left", "middle", "right"):
+            if name == "left":
+                self.to_end("LEFT")
+            elif name == "middle":
+                self.glide("RIGHT", self.position.pan_range / 2 - self.position.pan)
+            else:
+                self.to_end("RIGHT")
+            path = self.snapshot(os.path.join(out, "%s.jpg" % name))
+            frames.append({"name": name, "path": path, "pan": self.position.pan, "tilt": self.position.tilt})
+        return frames
+
+    def follow(self, seconds: float, out: str, settle: float = 0.4, frame=grey_frame) -> List[dict]:
+        """Follows what moves for about seconds: takes two frames, finds where they differ, turns
+        part of the way toward it, then looks again. Returns one entry per turn, {pan, tilt,
+        turns}. Something has to move in view: a waving hand works, a still room turns nothing."""
+        os.makedirs(out, exist_ok=True)
+        first, second = os.path.join(out, "follow-a.jpg"), os.path.join(out, "follow-b.jpg")
+        followed = []
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            before = frame(self.snapshot(first))
+            after = frame(self.snapshot(second))
+            center = motion_center(before, after, 64, 36)
+            plan = follow_turns(center) if center else []
+            for direction, degrees in plan:
+                self.glide(direction, degrees)
+            if plan:
+                followed.append({"pan": self.position.pan, "tilt": self.position.tilt, "turns": plan})
+                time.sleep(settle)
+        return followed
 
     def checkpoint(self, name: str, **values) -> None:
         """Prints one JSON line for you to judge before going on."""

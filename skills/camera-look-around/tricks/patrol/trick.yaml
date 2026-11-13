@@ -1,0 +1,12 @@
+name: patrol
+does: Checks left, the middle and right. Runs to the left end, glides to the middle of the pan range, runs to the right end, and saves a frame at each.
+run: python3 tricks/patrol/run.py <camera> --out patrol/
+parameters:
+  tilt: tilt angle up from the bottom end to patrol at (default where the camera already points)
+  out: directory for the frames
+checkpoints:
+  patrol: the three frames (left, middle, right) with their angles; you look at each and say what you checked
+validated: never
+runs: 0
+successes: 0
+notes: []

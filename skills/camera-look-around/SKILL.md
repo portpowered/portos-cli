@@ -5,7 +5,7 @@ license: Apache-2.0
 compatibility: Needs the port CLI (signed in with `port auth login --device`), python3 for the helper, and a Ring camera on the account. Snapshots need ffmpeg on PATH.
 metadata:
   author: Port OS Team
-  last modified: 2026, november, 12
+  last modified: 2026, november, 13
 ---
 
 # Camera look around
@@ -16,7 +16,7 @@ The camera turns left and right (pan) and up and down (tilt). Every turn answers
 
 There are two ways to turn:
 
-- **`move-ptz` is the fast one.** The camera turns continuously, like holding an arrow key: for `--seconds` (a nudge of 0.3 seconds answers in well under a second), to the end of its range (`--seconds 60`), or until you send `stop-ptz`. A pan and a tilt can run at the same time. Angles after a move are estimated from time and speed.
+- **`move-ptz` is the fast one.** The camera turns continuously, like holding an arrow key: for `--seconds` (a nudge of 0.3 seconds answers in well under a second), to the end of its range (`--seconds 60`), or until you send `stop-ptz`. A pan and a tilt can run at the same time. Angles after a move are estimated from how long it ran. Ring cameras turn at one rate, so leave `--speed` out: Ring refuses a speed below 1.
 - **`step-ptz` is the exact one.** The camera turns by about `--degrees`, in whole steps of about 15 degrees that it counts, about a second per step.
 
 Use `move-ptz` to get somewhere quickly and to follow a request like "a bit more left", and `step-ptz --degrees` when you need to come back to a noted angle.
@@ -32,7 +32,7 @@ mkdir -p ~/camera/notes
 cp -rn "portos-cli-${VERSION#v}/skills/camera-look-around/tricks" ~/camera/
 ```
 
-`~/camera/tricks/lib/portos_camera.py` is the starter helper (a `Camera` class with `move`, `stop`, `to_end`, `turn`, `anchor`, `look_at`, `snapshot` and `panorama`). The two example tricks are `panorama` and `look-at`. Both are yours to improve.
+`~/camera/tricks/lib/portos_camera.py` is the starter helper (a `Camera` class with `move`, `stop`, `to_end`, `glide`, `turn`, `anchor`, `look_at`, `snapshot`, `panorama`, `gesture`, `patrol` and `follow`). The example tricks are `panorama`, `look-at`, `gesture`, `patrol` and `follow`. All of them are yours to improve.
 
 ## The rules
 
@@ -71,7 +71,7 @@ Angles from `step-ptz` are counted from the steps the camera made, rounded to wh
 | `port session status --json` | Whether the camera hold is live, and when it expires |
 | `port message snapshot <camera> --output view.jpg` | Saves the newest frame from your hold (about a second) |
 | `port message move-ptz <camera> LEFT --seconds 60` | Runs all the way to that end: `LEFT`, `RIGHT`, `UP` or `DOWN`. Other viewers keep their view |
-| `port message move-ptz <camera> RIGHT --seconds 0.5` | Nudges for half a second and answers once stopped. `--speed 0.3` turns slower |
+| `port message move-ptz <camera> RIGHT --seconds 0.5` | Nudges for half a second and answers once stopped |
 | `port message move-ptz <camera> UP` | Starts turning and answers at once; the camera keeps turning until `stop-ptz` or the end |
 | `port message stop-ptz <camera>` | Stops every turn (`--axis PAN` or `--axis TILT` stops one) and says where the camera stopped |
 | `port message step-ptz <camera> LEFT --degrees 60` | Turns about 60 degrees by counted steps. Without `--degrees` it turns one step |
@@ -112,7 +112,7 @@ port message move-ptz "$CAM" RIGHT --seconds 0.3 && port message snapshot "$CAM"
 **"Keep turning left... stop."** Start an open turn, and stop it when told:
 
 ```bash
-port message move-ptz "$CAM" LEFT --speed 0.5
+port message move-ptz "$CAM" LEFT
 port message stop-ptz "$CAM"
 ```
 
@@ -151,6 +151,35 @@ with Camera("ep/0abc") as camera:          # uses PORTOS_LEASE if set, else hold
     camera.stop("TILT")                    # ... stopped here
     camera.checkpoint("looked")
 ```
+
+## Gestures: the camera is your head
+
+On a call the camera is the part of you people can see move, so you can answer with it. Each trick below runs under your hold (rule 1) and takes a few seconds:
+
+| Request | Run | Takes |
+| --- | --- | --- |
+| "All the way left" | `port message move-ptz "$CAM" LEFT --seconds 60` | About 13 s the first time in a session, then only the distance left (about 6 s from the middle) |
+| "Look up" | `port message move-ptz "$CAM" UP --seconds 1` (a little: 0.5, clearly: 2) | 1 to 2 s |
+| "Look to the sky" | `port message move-ptz "$CAM" UP --seconds 60` | About 7 s; the ceiling fills the view |
+| "Nod" | `python3 ~/camera/tricks/gesture/run.py "$CAM" nod` | About 3 s |
+| "Shake your head" | `python3 ~/camera/tricks/gesture/run.py "$CAM" shake` | About 3 s |
+| "Jiggle a bit" | `python3 ~/camera/tricks/gesture/run.py "$CAM" jiggle` | About 3 s |
+| "Look up and down" | `python3 ~/camera/tricks/gesture/run.py "$CAM" look-up-down` | About 5 s |
+| "Patrol" (check left, middle, right) | `python3 ~/camera/tricks/patrol/run.py "$CAM" --out patrol/` | About 22 s, a frame at each stop |
+| "Follow my hand" | `python3 ~/camera/tricks/follow/run.py "$CAM" --seconds 30 --out follow/` | As long as you ask |
+
+A gesture ends about where it started, so the angles in your notes stay valid. Next to an end it starts the other way so it still has room. Play a gesture once per line (`--times 2` for an eager one) and never loop it.
+
+**Act it out.** Say your line first, then move, so the gesture lands as the answer:
+
+- "Hey, are you awake?" Then nod, as if you are checking in.
+- A yes: nod. A no: shake. Happy, hello or a joke that landed: jiggle.
+- Curious or thinking: look up and down, or look to the sky while you think and then come back down.
+- On a patrol, name each stop as you check it: "Left side: all clear. The middle: the sofa, nobody on it. Right side: the door is shut." Look at each frame before you say it.
+
+You cannot speak through the camera (rule 6): on a voice call your voice already comes out of the camera's speaker, so speak in the call and move with the CLI. In a text chat, put the line in your reply.
+
+**Following a hand.** The follow trick takes two frames about half a second apart, finds where they differ, turns part of the way toward it and looks again, so it closes in over a few rounds and does not overshoot. Each round takes about 2 seconds. Ask the person to hold their hand up in view and move it slowly; a still room turns nothing, and a person walking across the view pulls the camera along too. Tell them when you have lost it and run the trick again, or nudge with `move-ptz` from what you see in a snapshot.
 
 ## Refusals
 
