@@ -65,6 +65,12 @@ type HoldParams struct {
 	Camera     bool
 	// Shared attaches the camera hold to the endpoint's shared session. It needs Camera.
 	Shared bool
+	// Listen receives the camera's microphone so record and play-audio --listen capture it. It
+	// needs Camera; without it the camera never sends audio.
+	Listen bool
+	// Talk gives a shared camera hold a talkback track, so play-audio works under it. It needs
+	// Shared; a single-peer camera hold always talks.
+	Talk bool
 	// DeadMan is how long the hold lives without a command; zero uses the host default.
 	DeadMan time.Duration
 }
@@ -73,12 +79,16 @@ type HoldParams struct {
 // caller passes (--lease or PORTOS_LEASE) to use the hold. Pose is null until
 // the hold has a pose from a move.
 type HoldResult struct {
-	HoldID     string                             `json:"holdId"`
-	Lease      string                             `json:"lease"`
-	EndpointID string                             `json:"endpointId"`
-	Kinds      []string                           `json:"kinds"`
-	Shared     bool                               `json:"shared,omitempty"`
-	Pose       *api.SpatialInterfacePoseAttribute `json:"pose"`
+	HoldID     string   `json:"holdId"`
+	Lease      string   `json:"lease"`
+	EndpointID string   `json:"endpointId"`
+	Kinds      []string `json:"kinds"`
+	Shared     bool     `json:"shared,omitempty"`
+	Listening  bool     `json:"listening,omitempty"`
+	Talking    bool     `json:"talking,omitempty"`
+	// ExpiresAt is when a shared camera session ends; the hold ends with it.
+	ExpiresAt *time.Time                         `json:"expiresAt,omitempty"`
+	Pose      *api.SpatialInterfacePoseAttribute `json:"pose"`
 }
 
 // Hold opens a hold on an endpoint and prints its lease.
@@ -102,6 +112,12 @@ func (c *SessionCommand) Hold(ctx context.Context, params HoldParams) error {
 	if params.Shared && params.Motion {
 		return exitcode.NewInvalidArgument(errors.New("--shared holds only the camera; open the motion hold without --shared"))
 	}
+	if params.Listen && !params.Camera {
+		return exitcode.NewInvalidArgument(errors.New("--listen receives the camera's microphone; add --camera"))
+	}
+	if params.Talk && !params.Shared {
+		return exitcode.NewInvalidArgument(errors.New("--talk is for a shared camera hold (--camera --shared); a camera hold without --shared always talks"))
+	}
 	if params.DeadMan < 0 {
 		return exitcode.NewInvalidArgument(errors.New("--dead-man must not be negative"))
 	}
@@ -118,6 +134,8 @@ func (c *SessionCommand) Hold(ctx context.Context, params HoldParams) error {
 		EndpointID:     params.EndpointID,
 		Kinds:          kinds,
 		Shared:         params.Shared,
+		Listen:         params.Listen,
+		Talk:           params.Talk,
 		DeadManSeconds: int(params.DeadMan / time.Second),
 	})
 	if err != nil {
@@ -127,10 +145,20 @@ func (c *SessionCommand) Hold(ctx context.Context, params HoldParams) error {
 	if opened.Motion != nil {
 		result.Pose = opened.Motion.Pose
 	}
+	if camera := opened.Camera; camera != nil {
+		result.Listening, result.Talking, result.ExpiresAt = camera.Listening, camera.Talking, camera.ExpiresAt
+	}
 	if c.formatter.IsJSON() {
 		return c.formatter.Print(result)
 	}
-	return c.formatter.Print(fmt.Sprintf("hold %s on %s (%s)\nlease %s\npass it as --lease or PORTOS_LEASE", result.HoldID, result.EndpointID, strings.Join(result.Kinds, ","), result.Lease))
+	line := fmt.Sprintf("hold %s on %s (%s)", result.HoldID, result.EndpointID, strings.Join(result.Kinds, ","))
+	if result.Listening {
+		line += "  listening"
+	}
+	if result.ExpiresAt != nil {
+		line += "  expires " + result.ExpiresAt.UTC().Format(time.RFC3339)
+	}
+	return c.formatter.Print(fmt.Sprintf("%s\nlease %s\npass it as --lease or PORTOS_LEASE", line, result.Lease))
 }
 
 // SessionStatusResult is what `port session status` prints.
@@ -205,11 +233,8 @@ func (c *SessionCommand) printHolds(result SessionStatusResult) error {
 		if hold.Motion != nil {
 			line += fmt.Sprintf("  seq %d pending %d keepalive %s", hold.Motion.SeqNum, hold.Motion.Pending, hold.Motion.KeepaliveMode)
 		}
-		if camera := hold.Camera; camera != nil && camera.Shared {
-			line += "  shared"
-			if camera.ExpiresAt != nil {
-				line += "  expires " + camera.ExpiresAt.UTC().Format(time.RFC3339)
-			}
+		if camera := hold.Camera; camera != nil {
+			line += cameraFlags(camera)
 		}
 		if hold.Ending != nil {
 			line += fmt.Sprintf("  ended: %s", hold.Ending.Reason)
@@ -222,4 +247,22 @@ func (c *SessionCommand) printHolds(result SessionStatusResult) error {
 		}
 	}
 	return nil
+}
+
+// cameraFlags is the camera part of a status line: shared, listening, talking and the expiry.
+func cameraFlags(camera *hostclient.CameraStatus) string {
+	line := ""
+	if camera.Shared {
+		line += "  shared"
+	}
+	if camera.Listening {
+		line += "  listening"
+	}
+	if camera.Shared && camera.Talking {
+		line += "  talking"
+	}
+	if camera.ExpiresAt != nil {
+		line += "  expires " + camera.ExpiresAt.UTC().Format(time.RFC3339)
+	}
+	return line
 }

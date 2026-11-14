@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -167,6 +168,58 @@ func (s stubRecordings) Record(_ context.Context, lease, endpointID string, dura
 	require.NoError(s.t, err)
 	require.NoError(s.t, file.Close())
 	return host.Recording{Path: file.Name(), Codec: "H264", FrameRate: 14.97}, nil
+}
+
+func (s stubRecordings) Capture(_ context.Context, lease, endpointID string, from time.Time, duration time.Duration) (host.AudioCapture, error) {
+	if lease != "secret-lease" {
+		return host.AudioCapture{}, &host.CodedError{Code: "hold_lease_required", Message: "pass the lease"}
+	}
+	if endpointID == "ep/deaf" {
+		return host.AudioCapture{}, &host.CodedError{Code: "hold_not_listening", Message: "hold it with --listen"}
+	}
+	if from.IsZero() {
+		from = time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)
+	}
+	file, err := os.CreateTemp(s.t.TempDir(), "held-*.ogg")
+	require.NoError(s.t, err)
+	_, err = file.WriteString("OggS " + endpointID + " " + duration.String())
+	require.NoError(s.t, err)
+	require.NoError(s.t, file.Close())
+	return host.AudioCapture{Path: file.Name(), From: from, Until: from.Add(duration), FirstPacketAt: from.Add(20 * time.Millisecond), Packets: 150}, nil
+}
+
+func TestCaptureCarriesTheHeldAudioAndItsWindow(t *testing.T) {
+	dir := runInProcess(t, host.Services{Recordings: stubRecordings{t: t}})
+	client, err := Dial(t.Context(), dir)
+	require.NoError(t, err)
+
+	from := time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)
+	capture, err := client.Capture(t.Context(), "secret-lease", "ep/robot", from, 3*time.Second)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.Remove(capture.Path) })
+	require.True(t, capture.From.Equal(from), capture.From)
+	require.True(t, capture.Until.Equal(from.Add(3*time.Second)), capture.Until)
+	require.True(t, capture.FirstPacketAt.Equal(from.Add(20*time.Millisecond)), capture.FirstPacketAt)
+	require.Equal(t, 150, capture.Packets)
+	require.Equal(t, ".ogg", filepath.Ext(capture.Path))
+	data, err := os.ReadFile(capture.Path)
+	require.NoError(t, err)
+	require.Equal(t, "OggS ep/robot 3s", string(data))
+
+	// From now: the host picks the start.
+	capture, err = client.Capture(t.Context(), "secret-lease", "ep/robot", time.Time{}, time.Second)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.Remove(capture.Path) })
+	require.False(t, capture.From.IsZero())
+
+	_, err = client.Capture(t.Context(), "", "ep/robot", from, time.Second)
+	require.Equal(t, exitcode.ExitHold, exitcode.Code(err))
+	_, err = client.Capture(t.Context(), "secret-lease", "ep/deaf", from, time.Second)
+	require.Equal(t, exitcode.ExitHold, exitcode.Code(err))
+	_, err = client.Capture(t.Context(), "secret-lease", "ep/robot", from, 11*time.Minute)
+	var statusErr *StatusError
+	require.ErrorAs(t, err, &statusErr)
+	require.Equal(t, host.CodeInvalidRequest, statusErr.Code)
 }
 
 func TestRecordCarriesTheHeldVideoAndItsTiming(t *testing.T) {

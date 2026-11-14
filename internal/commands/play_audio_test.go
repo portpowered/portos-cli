@@ -53,7 +53,7 @@ func TestPlayAudioUnderAHoldSendsTheOggClip(t *testing.T) {
 	clip := oggClip(t, 1)
 	sent := &scriptedMessages{}
 	formatter := &recordingFormatter{json: true}
-	cmd := NewPlayAudioCommand(fixedResolver{&heldSender{sent}}, formatter, logging.NewLoggerRef())
+	cmd := noon(NewPlayAudioCommand(fixedResolver{&heldSender{sent}}, formatter, logging.NewLoggerRef()))
 	if err := cmd.Run(t.Context(), PlayAudioParams{EndpointID: "ep/1", FilePath: writeFile(t, "hi.ogg", clip)}); err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestPlayAudioUnderAHoldConvertsOtherFormats(t *testing.T) {
 		t.Fatalf("ffmpeg: %v\n%s", err, out)
 	}
 	sent := &scriptedMessages{}
-	cmd := NewPlayAudioCommand(fixedResolver{&heldSender{sent}}, &recordingFormatter{json: true}, logging.NewLoggerRef())
+	cmd := noon(NewPlayAudioCommand(fixedResolver{&heldSender{sent}}, &recordingFormatter{json: true}, logging.NewLoggerRef()))
 	if err := cmd.Run(t.Context(), PlayAudioParams{EndpointID: "ep/1", FilePath: wav}); err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +90,7 @@ func TestPlayAudioUnderAHoldConvertsOtherFormats(t *testing.T) {
 func TestPlayAudioWithoutAHoldSendsTheFileAsIs(t *testing.T) {
 	mp3 := []byte("ID3 not really an mp3")
 	sent := &scriptedMessages{}
-	cmd := NewPlayAudioCommand(fixedResolver{cloudSender{sent}}, &recordingFormatter{json: true}, logging.NewLoggerRef())
+	cmd := noon(NewPlayAudioCommand(fixedResolver{cloudSender{sent}}, &recordingFormatter{json: true}, logging.NewLoggerRef()))
 	if err := cmd.Run(t.Context(), PlayAudioParams{EndpointID: "ep/1", FilePath: writeFile(t, "hi.mp3", mp3), Title: "hello"}); err != nil {
 		t.Fatal(err)
 	}
@@ -104,14 +104,14 @@ func TestPlayAudioWithoutAHoldSendsTheFileAsIs(t *testing.T) {
 }
 
 func TestPlayAudioRefusals(t *testing.T) {
-	cmd := NewPlayAudioCommand(fixedResolver{cloudSender{&scriptedMessages{}}}, &recordingFormatter{}, logging.NewLoggerRef())
+	cmd := noon(NewPlayAudioCommand(fixedResolver{cloudSender{&scriptedMessages{}}}, &recordingFormatter{}, logging.NewLoggerRef()))
 	err := cmd.Run(t.Context(), PlayAudioParams{EndpointID: "ep/1", FilePath: writeFile(t, "hi.txt", []byte("hi"))})
 	if exitcode.Code(err) != exitcode.ExitInvalid {
 		t.Fatalf("a .txt file: %v (exit %d), want exit %d", err, exitcode.Code(err), exitcode.ExitInvalid)
 	}
 
 	busy := messages.Refusal(time.Now(), "ep/1", "talkback_busy", "a clip is already playing")
-	cmd = NewPlayAudioCommand(fixedResolver{&heldSender{&scriptedMessages{responses: []*api.MessageRequest{busy}}}}, &recordingFormatter{}, logging.NewLoggerRef())
+	cmd = noon(NewPlayAudioCommand(fixedResolver{&heldSender{&scriptedMessages{responses: []*api.MessageRequest{busy}}}}, &recordingFormatter{}, logging.NewLoggerRef()))
 	err = cmd.Run(t.Context(), PlayAudioParams{EndpointID: "ep/1", FilePath: writeFile(t, "hi.ogg", oggClip(t, 1))})
 	if exitcode.Code(err) != exitcode.ExitBusy {
 		t.Fatalf("a busy talkback track: %v (exit %d), want exit %d", err, exitcode.Code(err), exitcode.ExitBusy)

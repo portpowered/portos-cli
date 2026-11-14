@@ -30,6 +30,9 @@ func (f *fakeHost) ListHolds(context.Context) ([]hostclient.Hold, error) { retur
 func (f *fakeHost) Record(_ context.Context, lease, endpointID string, d time.Duration) (hostclient.Recording, error) {
 	return hostclient.Recording{Path: lease + " " + endpointID + " " + d.String(), Codec: "H264", FrameRate: 15}, nil
 }
+func (f *fakeHost) Capture(_ context.Context, lease, endpointID string, from time.Time, d time.Duration) (hostclient.AudioCapture, error) {
+	return hostclient.AudioCapture{Path: lease + " " + endpointID + " " + d.String(), From: from, Until: from.Add(d)}, nil
+}
 func (f *fakeHost) Send(_ context.Context, lease string, req *api.CreateMessageRequest) (*api.MessageRequest, error) {
 	f.sent = append(f.sent, recordedSend{lease, req})
 	return &api.MessageRequest{Id: "host"}, nil

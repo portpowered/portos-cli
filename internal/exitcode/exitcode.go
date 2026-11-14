@@ -35,6 +35,8 @@ var providerCodeExits = map[string]int{
 	"go_to_point_session_lost":            ExitSessionNotActive,
 	"talkback_busy":                       ExitBusy,
 	"shared_hold_no_talkback":             ExitBusy,
+	"shared_audio_publisher_busy":         ExitBusy,
+	"hold_not_listening":                  ExitHold,
 	"hold_lease_required":                 ExitHold,
 	"hold_owned_by_other":                 ExitHold,
 	"hold_owns_session":                   ExitHold,

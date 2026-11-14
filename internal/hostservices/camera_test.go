@@ -30,6 +30,9 @@ func (s *stubStream) Play(context.Context, []byte) (time.Duration, error) { retu
 func (s *stubStream) Record(context.Context, time.Duration) (camera.Clip, error) {
 	return camera.Clip{Path: "held.h264", Codec: "H264", FrameRate: 15}, nil
 }
+func (s *stubStream) Capture(_ context.Context, from time.Time, d time.Duration) (camera.Audio, error) {
+	return camera.Audio{Path: "held.ogg", From: from, Until: from.Add(d), Packets: 50}, nil
+}
 func (s *stubStream) PTZ(context.Context, string, map[string]any) (*api.MessageRequest, error) {
 	return &api.MessageRequest{Id: "step", Status: api.SUCCEEDED}, nil
 }
@@ -194,4 +197,25 @@ func TestASharedHoldNeedsTheCameraKind(t *testing.T) {
 	built := New(Options{Clock: clock.NewFake(time.Unix(1000, 0)), Portos: okPortos{}, Keepalive: keepalive.Default, Camera: &stubOpener{}})
 	_, err := built.Services.Holds.Open(t.Context(), host.OpenHoldRequest{EndpointID: heldEndpoint, Kinds: []string{"motion"}, Shared: true})
 	requireHostCode(t, err, host.CodeInvalidRequest)
+}
+
+func TestListenAndTalkNeedTheirHolds(t *testing.T) {
+	built := New(Options{Clock: clock.NewFake(time.Unix(1000, 0)), Portos: okPortos{}, Keepalive: keepalive.Default, Camera: &stubOpener{}})
+	_, err := built.Services.Holds.Open(t.Context(), host.OpenHoldRequest{EndpointID: heldEndpoint, Kinds: []string{"motion"}, Listen: true})
+	requireHostCode(t, err, host.CodeInvalidRequest)
+	_, err = built.Services.Holds.Open(t.Context(), host.OpenHoldRequest{EndpointID: heldEndpoint, Kinds: []string{"camera"}, Talk: true})
+	requireHostCode(t, err, host.CodeInvalidRequest)
+
+	opened, err := built.Services.Holds.Open(t.Context(), host.OpenHoldRequest{EndpointID: heldEndpoint, Kinds: []string{"camera"}, Listen: true})
+	require.NoError(t, err)
+	require.NotNil(t, opened.Camera)
+	require.True(t, opened.Camera.Listening)
+	require.True(t, opened.Camera.Talking)
+
+	from := time.Unix(990, 0)
+	capture, err := built.Services.Recordings.Capture(t.Context(), opened.Lease, heldEndpoint, from, 2*time.Second)
+	require.NoError(t, err)
+	require.Equal(t, "held.ogg", capture.Path)
+	require.True(t, capture.From.Equal(from))
+	require.Equal(t, 50, capture.Packets)
 }

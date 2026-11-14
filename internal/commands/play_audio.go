@@ -3,11 +3,9 @@ package commands
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/portpowered/portos-cli/internal/api"
@@ -17,81 +15,148 @@ import (
 	"github.com/portpowered/portos-cli/internal/transport"
 )
 
-// playAudioMaxBytes is the largest clip Port OS takes inline.
-const playAudioMaxBytes = 10 << 20
+const (
+	// playAudioMaxBytes is the largest clip Port OS takes inline.
+	playAudioMaxBytes = 10 << 20
+	// QuietHoursEnd is the local hour before which play-audio refuses unless --allow-quiet-hours,
+	// so a script left running overnight never wakes the household.
+	QuietHoursEnd = 9
+	// ListenMax is the longest play-audio --listen.
+	ListenMax = 5 * time.Minute
+)
 
-// audioMimeTypes maps the file extensions play-audio sends to their MIME types.
-var audioMimeTypes = map[string]string{
-	".ogg":  "audio/ogg",
-	".opus": "audio/ogg",
-	".mp3":  "audio/mpeg",
-	".wav":  "audio/wav",
-	".m4a":  "audio/mp4",
-	".aac":  "audio/aac",
-	".flac": "audio/flac",
-}
-
-// PlayAudioCommand plays an audio file on an endpoint: through the held camera's talkback
-// track under a camera hold, otherwise as the cloud media-player/play-audio message.
+// PlayAudioCommand plays audio on an endpoint: through the held camera's talkback track under a
+// camera hold, otherwise as the cloud media-player/play-audio message. Under a listening hold it
+// also records what the camera hears while the clip plays and after it.
 type PlayAudioCommand struct {
 	resolver  transport.Resolver
 	formatter output.Formatter
 	logger    *logging.LoggerRef
+	now       func() time.Time // the quiet-hours clock
 }
 
 // NewPlayAudioCommand creates a new play-audio command.
 func NewPlayAudioCommand(resolver transport.Resolver, formatter output.Formatter, logger *logging.LoggerRef) *PlayAudioCommand {
-	return &PlayAudioCommand{resolver: resolver, formatter: formatter, logger: logger}
+	return &PlayAudioCommand{resolver: resolver, formatter: formatter, logger: logger, now: time.Now}
 }
 
-// PlayAudioParams are the inputs of PlayAudioCommand.Run.
+// PlayAudioParams are the inputs of PlayAudioCommand.Run. Exactly one of FilePath, Text and
+// Chirp names the audio.
 type PlayAudioParams struct {
 	EndpointID string
 	FilePath   string
-	Title      string
+	// Text is spoken by SpeechModel on SpeechEndpoint (speech-audio-generation), in Voice.
+	Text           string
+	Voice          string
+	SpeechEndpoint string
+	SpeechModel    string
+	// Chirp plays a short rising tone, which a recording can be aligned on.
+	Chirp bool
+	Title string
+	// Listen records the camera's microphone from the clip's start until Listen after its end,
+	// to OutputPath. It needs a camera hold opened with --listen.
+	Listen          time.Duration
+	OutputPath      string
+	AllowQuietHours bool
 }
 
-// PlayAudioResult is what play-audio prints. Seconds is the clip's length when it is Ogg/Opus;
-// the clip plays on after the command returns.
+// PlayAudioResult is what play-audio prints. Seconds is the clip's length when it is Ogg/Opus.
+// Under a hold, PlayStartedAt is when the host reported the first packet sent and PlayEndedAt
+// that plus the clip's length; the clip plays on after the command returns unless it listens.
 type PlayAudioResult struct {
-	EndpointID string  `json:"endpointId"`
-	Held       bool    `json:"held"`
-	Seconds    float64 `json:"seconds,omitempty"`
+	EndpointID    string     `json:"endpointId"`
+	Held          bool       `json:"held"`
+	Seconds       float64    `json:"seconds,omitempty"`
+	PlayStartedAt *time.Time `json:"playStartedAt,omitempty"`
+	PlayEndedAt   *time.Time `json:"playEndedAt,omitempty"`
+	*ListenResult
 }
 
-// Run sends the file. Under a camera hold a non-Ogg file is converted to Ogg/Opus with ffmpeg
+// Run sends the audio. Under a camera hold a non-Ogg clip is converted to Ogg/Opus with ffmpeg
 // first, because the held camera plays Opus only; Port OS converts it on the cloud path.
 func (c *PlayAudioCommand) Run(ctx context.Context, params PlayAudioParams) error {
-	mime, ok := audioMimeTypes[strings.ToLower(filepath.Ext(params.FilePath))]
-	if !ok {
-		return exitcode.NewInvalidArgument(fmt.Errorf("play-audio takes .ogg, .opus, .mp3, .wav, .m4a, .aac or .flac, not %q", filepath.Ext(params.FilePath)))
+	if err := c.check(params); err != nil {
+		return err
 	}
 	sender, err := c.resolver.For(ctx, params.EndpointID, api.INTERFACE_PORTOS_MEDIA_PLAYER, api.INTERFACE_PORTOS_MEDIA_PLAYER_PLAY_AUDIO)
 	if err != nil {
 		return err
 	}
 	held := transport.Held(sender)
-	var data []byte
-	if held && mime != "audio/ogg" {
-		data, err = toOggOpus(ctx, params.FilePath)
-		mime = "audio/ogg"
-	} else {
-		data, err = os.ReadFile(params.FilePath)
+	if params.Listen > 0 && !held {
+		return exitcode.NewInvalidArgument(errors.New("--listen records through a camera hold: open one with session hold --camera --listen and pass its lease"))
 	}
+	clip, err := c.clip(ctx, params, held)
 	if err != nil {
 		return err
 	}
-	if len(data) > playAudioMaxBytes {
-		return exitcode.NewInvalidArgument(fmt.Errorf("the clip is %d bytes; play-audio takes at most 10 MiB", len(data)))
+	if len(clip.data) > playAudioMaxBytes {
+		return exitcode.NewInvalidArgument(fmt.Errorf("the clip is %d bytes; play-audio takes at most 10 MiB", len(clip.data)))
 	}
 	result := PlayAudioResult{EndpointID: params.EndpointID, Held: held}
-	if mime == "audio/ogg" {
-		if _, length, err := parseOggOpus(data); err == nil {
-			result.Seconds = length.Seconds()
+	var length time.Duration
+	if clip.mime == "audio/ogg" {
+		if _, n, err := parseOggOpus(clip.data); err == nil {
+			length, result.Seconds = n, n.Seconds()
 		}
 	}
 
-	body := map[string]interface{}{"audio": map[string]interface{}{"data": base64.StdEncoding.EncodeToString(data), "mimeType": mime}}
+	sentAt := time.Now()
+	if err := c.send(ctx, sender, params, clip); err != nil {
+		return err
+	}
+	if held {
+		started := time.Now()
+		ended := started.Add(length)
+		result.PlayStartedAt, result.PlayEndedAt = &started, &ended
+		if params.Listen > 0 {
+			if result.ListenResult, err = c.listen(ctx, sender, params, sentAt, ended.Add(params.Listen)); err != nil {
+				return err
+			}
+		}
+	}
+	return c.print(result)
+}
+
+// check refuses impossible flag sets and quiet hours before anything is sent.
+func (c *PlayAudioCommand) check(params PlayAudioParams) error {
+	sources := 0
+	for _, given := range []bool{params.FilePath != "", params.Text != "", params.Chirp} {
+		if given {
+			sources++
+		}
+	}
+	invalid := func(message string) error { return exitcode.NewInvalidArgument(errors.New(message)) }
+	switch {
+	case params.EndpointID == "":
+		return invalid("endpoint ID is required")
+	case sources != 1:
+		return invalid("name the audio with exactly one of --file, --text or --chirp")
+	case params.Text != "" && (params.SpeechEndpoint == "" || params.SpeechModel == ""):
+		return invalid("--text needs --speech-endpoint (an endpoint with speech-audio-generation) and --speech-model (from query-models)")
+	case params.Text == "" && (params.Voice != "" || params.SpeechEndpoint != "" || params.SpeechModel != ""):
+		return invalid("--voice, --speech-endpoint and --speech-model go with --text")
+	case params.Listen < 0 || params.Listen > ListenMax:
+		return invalid(fmt.Sprintf("--listen is between 0 and %d seconds", int(ListenMax.Seconds())))
+	case params.Listen > 0 && params.OutputPath == "":
+		return invalid("--listen writes what the camera hears to --output")
+	case params.Listen == 0 && params.OutputPath != "":
+		return invalid("--output holds what --listen records; add --listen")
+	}
+	if params.OutputPath != "" {
+		if err := checkAudioOutput(params.OutputPath); err != nil {
+			return exitcode.NewInvalidArgument(err)
+		}
+	}
+	if now := c.now(); !params.AllowQuietHours && now.Hour() < QuietHoursEnd {
+		return invalid(fmt.Sprintf("it is %s here, before %02d:00, so play-audio stays quiet; pass --allow-quiet-hours to play anyway", now.Format("15:04"), QuietHoursEnd))
+	}
+	return nil
+}
+
+// send plays the clip with the media-player/play-audio message and waits for its reply.
+func (c *PlayAudioCommand) send(ctx context.Context, sender transport.Sender, params PlayAudioParams, clip playClip) error {
+	body := map[string]interface{}{"audio": map[string]interface{}{"data": base64.StdEncoding.EncodeToString(clip.data), "mimeType": clip.mime}}
 	if params.Title != "" {
 		body["title"] = params.Title
 	}
@@ -112,31 +177,25 @@ func (c *PlayAudioCommand) Run(ctx context.Context, params PlayAudioParams) erro
 	if err := messageRequestFailure(response); err != nil {
 		return fmt.Errorf("play-audio: %w", err)
 	}
+	return nil
+}
+
+func (c *PlayAudioCommand) print(result PlayAudioResult) error {
 	if c.formatter.IsJSON() {
 		return c.formatter.Print(result)
 	}
-	line := "Playing on " + params.EndpointID
+	line := "Playing on " + result.EndpointID
 	if result.Seconds > 0 {
 		line += fmt.Sprintf(" (%.1f s)", result.Seconds)
 	}
+	if listen := result.ListenResult; listen != nil {
+		line += fmt.Sprintf("; recorded %.1f s of the camera's microphone to %s", listen.RecordEndedAt.Sub(listen.RecordStartedAt).Seconds(), listen.OutputPath)
+		if listen.MaxVolumeDB != nil {
+			line += fmt.Sprintf(" (peak %.1f dBFS)", *listen.MaxVolumeDB)
+		}
+		if listen.AudioPackets == 0 {
+			line += ", but no audio arrived"
+		}
+	}
 	return c.formatter.Print(line)
-}
-
-// toOggOpus converts an audio file to the 48 kHz stereo Ogg/Opus the held camera plays.
-func toOggOpus(ctx context.Context, path string) ([]byte, error) {
-	if _, err := exec.LookPath("ffmpeg"); err != nil {
-		return nil, fmt.Errorf("under a camera hold play-audio converts %s to Ogg/Opus with ffmpeg, which is not on PATH; convert it yourself or install ffmpeg", filepath.Ext(path))
-	}
-	dir, err := os.MkdirTemp("", "portos-play-audio-*")
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = os.RemoveAll(dir) }()
-	out := filepath.Join(dir, "clip.ogg")
-	args := []string{"-hide_banner", "-loglevel", "error", "-y", "-i", safePathArg(path), "-vn", "-ac", "2", "-ar", "48000",
-		"-c:a", "libopus", "-b:a", "64k", "-frame_duration", "20", "-f", "ogg", out}
-	if output, err := exec.CommandContext(ctx, "ffmpeg", args...).CombinedOutput(); err != nil {
-		return nil, fmt.Errorf("convert to Ogg/Opus: %w: %s", err, strings.TrimSpace(string(output)))
-	}
-	return os.ReadFile(out)
 }

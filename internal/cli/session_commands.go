@@ -37,7 +37,7 @@ func NewSessionHoldCommand(command *commands.SessionCommand) *SessionHoldCommand
 
 // Generate returns the cobra command for hold.
 func (c *SessionHoldCommand) Generate() *cobra.Command {
-	var motion, camera, shared bool
+	var motion, camera, shared, listen, talk bool
 	var deadMan time.Duration
 	cmd := &cobra.Command{
 		Short: "Open a hold on an endpoint and print its lease",
@@ -49,12 +49,16 @@ The host ends the hold, sending the robot home, when no command arrives for
 		Example: `  port session hold ep/0abc --motion --dead-man 10m`,
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return c.command.Hold(cmd.Context(), commands.HoldParams{EndpointID: args[0], Motion: motion, Camera: camera, Shared: shared, DeadMan: deadMan})
+			return c.command.Hold(cmd.Context(), commands.HoldParams{
+				EndpointID: args[0], Motion: motion, Camera: camera, Shared: shared, Listen: listen, Talk: talk, DeadMan: deadMan,
+			})
 		},
 	}
 	cmd.Flags().BoolVar(&motion, "motion", false, "Hold the endpoint's remote-control session")
 	cmd.Flags().BoolVar(&camera, "camera", false, "Hold the endpoint's camera session, so snapshots and play-audio under the lease skip opening a new one")
-	cmd.Flags().BoolVar(&shared, "shared", false, "With --camera, attach to the endpoint's shared session so a call and this hold watch one camera; the hold has no talkback and ends when the session does")
+	cmd.Flags().BoolVar(&shared, "shared", false, "With --camera, attach to the endpoint's shared session so a call and this hold watch one camera; the hold has no talkback unless --talk, and ends when the session does")
+	cmd.Flags().BoolVar(&listen, "listen", false, "With --camera, receive the camera's microphone and keep the last 2 minutes, so record adds sound and play-audio --listen records the reply")
+	cmd.Flags().BoolVar(&talk, "talk", false, "With --camera --shared, send talkback into the shared session so play-audio works; refused as shared_audio_publisher_busy while a call already talks")
 	cmd.Flags().DurationVar(&deadMan, "dead-man", 0, "End the hold after this long without a command (default 10m)")
 	return cmd
 }

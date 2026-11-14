@@ -16,11 +16,8 @@ leaves it open when the block ends: whoever opens a hold releases it.
 
 Angles: pan counts degrees right of the left end and tilt counts degrees up from the bottom end,
 once the camera has been turned to that end in this camera session (`anchor()` does both). Before
-that they count from the ends as the camera's last session left them (`pan_remembered` /
-`tilt_remembered`), or from where the session started, and `pan_known` / `tilt_known` are False.
-A remembered angle holds only if nothing else turned the camera between sessions: take a
-snapshot, and when it shows what your notes say is at that angle, call `trust_remembered()` to
-use it without anchoring.
+that they count from where the session started, and `pan_known` / `tilt_known` are False. A Ring
+camera turns back to its home view when a live view ends, so a new session usually starts there.
 
 Two ways to turn: `turn` goes by angle in whole steps of about 15 degrees and counts them, so it
 is the exact one; `move` turns continuously for a time (or to the end, or until `stop`), so it is
@@ -105,8 +102,6 @@ class Position:
     moved: float = 0.0
     pan_moving: bool = False
     tilt_moving: bool = False
-    pan_remembered: bool = False
-    tilt_remembered: bool = False
 
     @staticmethod
     def from_reply(value: dict) -> "Position":
@@ -120,8 +115,6 @@ class Position:
             moved=float(value.get("movedDegrees", 0)),
             pan_moving=bool(value.get("panMoving", False)),
             tilt_moving=bool(value.get("tiltMoving", False)),
-            pan_remembered=value["panReference"] == "REMEMBERED_LEFT_END",
-            tilt_remembered=value["tiltReference"] == "REMEMBERED_BOTTOM_END",
         )
 
 
@@ -158,14 +151,13 @@ def axis_of(direction: str) -> str:
 
 
 def room(position: Optional[Position], direction: str) -> Optional[float]:
-    """Degrees the camera can still turn in direction, or None while that axis counts from the
-    session start. A remembered axis counts: a wrong guess only makes a gesture run into an end."""
+    """Degrees the camera can still turn in direction, or None while that axis is not anchored."""
     if position is None:
         return None
     if axis_of(direction) == "PAN":
-        value, span, known = position.pan, position.pan_range, position.pan_known or position.pan_remembered
+        value, span, known = position.pan, position.pan_range, position.pan_known
     else:
-        value, span, known = position.tilt, position.tilt_range, position.tilt_known or position.tilt_remembered
+        value, span, known = position.tilt, position.tilt_range, position.tilt_known
     if not known:
         return None
     return span - value if direction in ("RIGHT", "UP") else value
@@ -271,8 +263,6 @@ class Camera:
         self.hold_id = ""
         self.opened = False
         self.position: Optional[Position] = None
-        # trusted takes remembered angles as known, once a snapshot has confirmed them.
-        self.trusted = False
 
     def hold(self) -> "Camera":
         """Attaches next to any call with a shared hold, unless PORTOS_LEASE is already set."""
@@ -334,23 +324,12 @@ class Camera:
         if not reply.get("position"):
             raise CameraError(0, "the camera reported no position after the turn")
         self.position = Position.from_reply(reply["position"])
-        if self.trusted:
-            self.position.pan_known = self.position.pan_known or self.position.pan_remembered
-            self.position.tilt_known = self.position.tilt_known or self.position.tilt_remembered
         return self.position
 
     def where(self) -> Position:
         """Asks where the camera points without turning it (stop-ptz turns nothing when nothing
-        turns). At the start of a session the angles may be remembered from the last one."""
+        turns). At the start of a session the angles count from the session start."""
         return self.stop()
-
-    def trust_remembered(self) -> Position:
-        """Takes the angles the last session left as known, so look_at() and glide_to() use them
-        without anchoring. Call it only after a snapshot showed what your notes say is at those
-        angles: something else may have turned the camera between sessions. Anchoring again
-        replaces them with exact ones."""
-        self.trusted = True
-        return self.where()
 
     def anchor(self, pan: bool = True, tilt: bool = True) -> Position:
         """Runs to the left end and the bottom end, so later angles are exact."""

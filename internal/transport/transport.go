@@ -43,3 +43,15 @@ func RecordHeld(ctx context.Context, s Sender, endpointID string, duration time.
 	}
 	return recorder.Record(ctx, endpointID, duration)
 }
+
+// CaptureHeld captures a held camera's microphone through a held sender, from `from` (now when
+// zero) for the duration. The hold must listen (session hold --camera --listen).
+func CaptureHeld(ctx context.Context, s Sender, endpointID string, from time.Time, duration time.Duration) (hostclient.AudioCapture, error) {
+	capturer, ok := s.(interface {
+		Capture(ctx context.Context, endpointID string, from time.Time, duration time.Duration) (hostclient.AudioCapture, error)
+	})
+	if !ok {
+		return hostclient.AudioCapture{}, errors.New("only a held camera captures audio through the session host")
+	}
+	return capturer.Capture(ctx, endpointID, from, duration)
+}

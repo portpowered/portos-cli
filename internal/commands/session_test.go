@@ -131,6 +131,8 @@ func TestSessionHoldSharedNeedsTheCameraAlone(t *testing.T) {
 	for name, params := range map[string]HoldParams{
 		"no camera":         {EndpointID: "ep/1", Motion: true, Shared: true},
 		"motion and camera": {EndpointID: "ep/1", Motion: true, Camera: true, Shared: true},
+		"listen, no camera": {EndpointID: "ep/1", Motion: true, Listen: true},
+		"talk, not shared":  {EndpointID: "ep/1", Camera: true, Talk: true},
 	} {
 		host := &fakeSessionHost{}
 		cmd, _ := newTestSessionCommand(host)
@@ -158,5 +160,16 @@ func TestSessionStatusShowsASharedCameraAndItsExpiry(t *testing.T) {
 	line, _ := formatter.printed[0].(string)
 	if !strings.Contains(line, "shared") || !strings.Contains(line, "2026-11-11T10:00:00Z") {
 		t.Fatalf("status line = %q, want shared and the expiry", line)
+	}
+}
+
+func TestSessionHoldAsksTheHostToListenAndTalk(t *testing.T) {
+	host := &fakeSessionHost{}
+	cmd, _ := newTestSessionCommand(host)
+	if err := cmd.Hold(t.Context(), HoldParams{EndpointID: "ep/1", Camera: true, Shared: true, Listen: true, Talk: true}); err != nil {
+		t.Fatal(err)
+	}
+	if len(host.opened) != 1 || !host.opened[0].Listen || !host.opened[0].Talk {
+		t.Fatalf("opened = %+v, want a listening, talking hold", host.opened)
 	}
 }

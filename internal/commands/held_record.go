@@ -14,11 +14,13 @@ import (
 const HeldClipMax = 10 * time.Minute
 
 // HeldClip is video recorded from a held camera: raw H264 or IVF at Path, played at FrameRate.
-// The held peer receives no audio, so a held clip has none. Remove deletes the file.
+// StartedAt is when its first frame arrived, so a capture of the camera's microphone can be
+// aligned to it. The clip itself has no audio. Remove deletes the file.
 type HeldClip struct {
 	Path      string
 	Codec     string
 	FrameRate float64
+	StartedAt time.Time
 }
 
 // Remove deletes the clip's file.
@@ -60,6 +62,9 @@ func (h *HeldCamera) Record(ctx context.Context, duration time.Duration) (HeldCl
 	_ = tap.writer.Close()
 	_ = tap.file.Close()
 	clip := HeldClip{Path: tap.file.Name(), Codec: codec, FrameRate: measureFrameRate(stamps)}
+	if !tap.until.IsZero() {
+		clip.StartedAt = tap.until.Add(-duration)
+	}
 	if err == nil && clip.FrameRate <= 0 {
 		err = errors.New("the held camera sent too few video frames to time the recording")
 	}

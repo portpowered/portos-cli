@@ -14,16 +14,17 @@ import (
 )
 
 type fakeStream struct {
-	id     int
-	done   chan struct{}
-	once   sync.Once
-	mu     sync.Mutex
-	closed bool
-	frame  []byte
-	err    error
-	play   error
-	played [][]byte
-	record error
+	id      int
+	done    chan struct{}
+	once    sync.Once
+	mu      sync.Mutex
+	closed  bool
+	frame   []byte
+	err     error
+	play    error
+	played  [][]byte
+	record  error
+	capture error
 	// shared streams report an expiry and why they ended.
 	expires time.Time
 	ended   string
@@ -61,6 +62,12 @@ func (f *fakeStream) Record(_ context.Context, d time.Duration) (Clip, error) {
 	}
 	return Clip{Path: fmt.Sprintf("clip-%d-%s", f.id, d), Codec: "H264", FrameRate: 15}, nil
 }
+func (f *fakeStream) Capture(_ context.Context, from time.Time, d time.Duration) (Audio, error) {
+	if f.capture != nil {
+		return Audio{}, f.capture
+	}
+	return Audio{Path: fmt.Sprintf("audio-%d-%s", f.id, d), From: from, Until: from.Add(d), Packets: 50}, nil
+}
 func (f *fakeStream) Done() <-chan struct{} { return f.done }
 func (f *fakeStream) Close(context.Context) error {
 	f.mu.Lock()
@@ -85,14 +92,17 @@ type fakeOpener struct {
 	sharedFor time.Duration
 	clock     clock.Clock
 	shared    int
+	// audio is the audio mode each open was marked with.
+	audio []holds.Audio
 }
 
-func (o *fakeOpener) Open(_ context.Context, _ string, lifetime time.Duration) (Stream, error) {
+func (o *fakeOpener) Open(ctx context.Context, _ string, lifetime time.Duration) (Stream, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	if o.fail != nil {
 		return nil, o.fail
 	}
+	o.audio = append(o.audio, holds.AudioOf(ctx))
 	s := &fakeStream{id: len(o.streams) + 1, done: make(chan struct{}), frame: []byte{0xff, 0xd8, byte(len(o.streams) + 1)}}
 	o.streams = append(o.streams, s)
 	o.lifetimes = append(o.lifetimes, lifetime)
@@ -441,5 +451,55 @@ func TestSinglePeerHoldStillPlaysAudioAndOpensWithoutTheSharedMode(t *testing.T)
 	}
 	if _, err := svc.PlayAudio(t.Context(), "hold-1", []byte("OggS")); err != nil {
 		t.Fatalf("PlayAudio = %v", err)
+	}
+}
+
+func TestASharedTalkingHoldPlaysAudio(t *testing.T) {
+	opener, _, svc, _ := newTestService(t)
+	ctx := holds.WithAudio(holds.WithShared(t.Context()), holds.Audio{Talk: true})
+	if err := svc.Open(ctx, "hold-1", "ep"); err != nil {
+		t.Fatal(err)
+	}
+	if got := opener.audio[0]; !got.Talk || got.Listen {
+		t.Fatalf("opened with %+v, want talking", got)
+	}
+	if _, err := svc.PlayAudio(t.Context(), "hold-1", []byte("OggS")); err != nil {
+		t.Fatalf("PlayAudio under a shared talking hold: %v", err)
+	}
+	if status, _ := svc.Status("hold-1"); !status.Shared || !status.Talking || status.Listening {
+		t.Fatalf("status = %+v", status)
+	}
+}
+
+func TestCaptureNeedsAListeningHold(t *testing.T) {
+	opener, _, svc, _ := newTestService(t)
+	if err := svc.Open(t.Context(), "hold-1", "ep"); err != nil {
+		t.Fatal(err)
+	}
+	_, err := svc.Capture(t.Context(), "hold-1", time.Time{}, time.Second)
+	var holdErr *holds.Error
+	if !errors.As(err, &holdErr) || holdErr.Code != holds.CodeHoldNotListening {
+		t.Fatalf("Capture under a deaf hold = %v, want %s", err, holds.CodeHoldNotListening)
+	}
+	if status, _ := svc.Status("hold-1"); !status.Talking || status.Listening {
+		t.Fatalf("a single-peer hold: status = %+v, want talking and not listening", status)
+	}
+
+	if err := svc.Open(holds.WithAudio(t.Context(), holds.Audio{Listen: true}), "hold-2", "ep2"); err != nil {
+		t.Fatal(err)
+	}
+	if !opener.audio[1].Listen {
+		t.Fatalf("opened with %+v, want listening", opener.audio[1])
+	}
+	from := time.Unix(990, 0)
+	audio, err := svc.Capture(t.Context(), "hold-2", from, 2*time.Second)
+	if err != nil || audio.Path != "audio-2-2s" || !audio.From.Equal(from) {
+		t.Fatalf("Capture = %+v, %v", audio, err)
+	}
+
+	opener.stream(1).capture = ErrCaptureWindow
+	_, err = svc.Capture(t.Context(), "hold-2", from, 2*time.Second)
+	if !errors.As(err, &holdErr) || holdErr.Code != holds.CodeInvalidRequest {
+		t.Fatalf("a capture outside the kept audio = %v, want %s", err, holds.CodeInvalidRequest)
 	}
 }

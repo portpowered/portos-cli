@@ -37,6 +37,12 @@ type HeldCameraParams struct {
 	// and no talkback track. The camera keeps the message request's session hold open and
 	// ends when Port OS ends the attachment.
 	Shared bool
+	// Listen receives the camera's microphone and keeps the newest HeldAudioKeep of it for
+	// Capture. Without it the camera never sends audio, so a robot's microphone stays off.
+	Listen bool
+	// Talk gives a shared camera a talkback track, which makes this hold the shared session's one
+	// audio publisher. A single-peer camera always has one.
+	Talk bool
 }
 
 // HeldCamera is a camera peer the session host keeps open. It keeps the newest few seconds of
@@ -67,6 +73,11 @@ type HeldCamera struct {
 	taps       []*heldTap // recordings in progress
 	expiresAt  time.Time  // shared: when the session ends
 	endReason  string     // shared: why the session hold ended
+
+	audioMu   sync.Mutex
+	kept      []heldAudioPacket // the newest HeldAudioKeep of microphone audio, oldest first
+	captures  []*heldCapture
+	lastAudio time.Time
 }
 
 // heldSegment is one file of video that starts at a keyframe.
@@ -160,8 +171,13 @@ func (h *HeldCamera) addTracks(started chan<- error) error {
 	if _, err := h.pc.AddTransceiverFromKind(webrtc.RTPCodecTypeVideo, webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionRecvonly}); err != nil {
 		return fmt.Errorf("add video transceiver: %w", err)
 	}
-	if !h.params.Shared {
-		if err := h.addTalkback(); err != nil {
+	switch {
+	case !h.params.Shared || h.params.Talk:
+		if err := h.addTalkback(h.params.Listen); err != nil {
+			return err
+		}
+	case h.params.Listen:
+		if err := addOpusReceiver(h.pc); err != nil {
 			return err
 		}
 	}
@@ -172,10 +188,12 @@ func (h *HeldCamera) addTracks(started chan<- error) error {
 		}
 	})
 	h.pc.OnTrack(func(track *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
-		if track.Kind() != webrtc.RTPCodecTypeVideo {
-			return
+		switch {
+		case track.Kind() == webrtc.RTPCodecTypeVideo:
+			h.readVideo(h.life, track, started)
+		case track.Kind() == webrtc.RTPCodecTypeAudio && h.params.Listen:
+			h.readAudio(h.life, track)
 		}
-		h.readVideo(h.life, track, started)
 	})
 	return nil
 }

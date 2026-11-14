@@ -11,6 +11,7 @@ import (
 	"github.com/portpowered/portos-cli/internal/commands"
 	"github.com/portpowered/portos-cli/internal/config"
 	"github.com/portpowered/portos-cli/internal/services/camera"
+	"github.com/portpowered/portos-cli/internal/services/holds"
 )
 
 // heldCameraOpener opens the session host's camera streams with the recorder's
@@ -27,19 +28,23 @@ func (o *heldCameraOpener) Open(ctx context.Context, endpointID string, lifetime
 	return o.open(ctx, endpointID, lifetime, false)
 }
 
-// OpenShared attaches to the endpoint's shared session as a receive-only subscriber.
+// OpenShared attaches to the endpoint's shared session as a subscriber: receive-only video, plus
+// the microphone and talkback that ctx's audio mark asks for.
 func (o *heldCameraOpener) OpenShared(ctx context.Context, endpointID string, lifetime time.Duration) (camera.Stream, error) {
 	return o.open(ctx, endpointID, lifetime, true)
 }
 
 func (o *heldCameraOpener) open(ctx context.Context, endpointID string, lifetime time.Duration, shared bool) (camera.Stream, error) {
 	n := o.opened.Add(1)
+	audio := holds.AudioOf(ctx)
 	held, err := o.recorder.HoldCamera(ctx, commands.HeldCameraParams{
 		EndpointID:    endpointID,
 		SessionDomain: o.sessionDomain(),
 		SessionID:     fmt.Sprintf("hold-camera-%d-%d", time.Now().UnixNano(), n),
 		Lifetime:      lifetime,
 		Shared:        shared,
+		Listen:        audio.Listen,
+		Talk:          audio.Talk,
 	})
 	if err != nil {
 		return nil, err
@@ -66,7 +71,18 @@ func (s heldStream) Record(ctx context.Context, duration time.Duration) (camera.
 	if err != nil {
 		return camera.Clip{}, err
 	}
-	return camera.Clip{Path: clip.Path, Codec: clip.Codec, FrameRate: clip.FrameRate}, nil
+	return camera.Clip{Path: clip.Path, Codec: clip.Codec, FrameRate: clip.FrameRate, StartedAt: clip.StartedAt}, nil
+}
+
+func (s heldStream) Capture(ctx context.Context, from time.Time, duration time.Duration) (camera.Audio, error) {
+	audio, err := s.HeldCamera.Capture(ctx, from, duration)
+	switch {
+	case errors.Is(err, commands.ErrCaptureWindow), errors.Is(err, commands.ErrNotListening):
+		return camera.Audio{}, fmt.Errorf("%w: %v", camera.ErrCaptureWindow, err)
+	case err != nil:
+		return camera.Audio{}, err
+	}
+	return camera.Audio{Path: audio.Path, From: audio.From, Until: audio.Until, FirstPacketAt: audio.FirstPacketAt, Packets: audio.Packets}, nil
 }
 
 // sessionDomain is the API host, as the snapshot and record commands use.

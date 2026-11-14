@@ -36,6 +36,7 @@ const (
 	pathHolds    = "/holds"
 	pathMessages = "/message-requests"
 	pathRecord   = "/recordings"
+	pathCapture  = "/audio-captures"
 
 	// LeaseHeader carries the hold lease on POST /message-requests.
 	LeaseHeader = host.LeaseHeader
@@ -49,6 +50,9 @@ type Status = host.StatusResponse
 
 // Hold is one hold.
 type Hold = host.HoldStatus
+
+// CameraStatus is a hold's camera.
+type CameraStatus = host.CameraStatus
 
 // OpenedHold is a freshly opened hold with its lease.
 type OpenedHold = host.OpenedHold
@@ -192,7 +196,45 @@ func (c *Client) Record(ctx context.Context, lease, endpointID string, duration 
 		_ = os.Remove(file.Name())
 		return Recording{}, fmt.Errorf("%w: read the recording: %v", ErrTransport, err)
 	}
-	return Recording{Path: file.Name(), Codec: codec, FrameRate: rate}, nil
+	started, _ := time.Parse(time.RFC3339Nano, resp.Header.Get(host.VideoStartedAtHeader))
+	return Recording{Path: file.Name(), Codec: codec, FrameRate: rate, StartedAt: started}, nil
+}
+
+// AudioCapture is microphone audio the host captured from a listening held camera, saved as
+// Ogg/Opus at Path. The caller removes Path.
+type AudioCapture = host.AudioCapture
+
+// Capture asks the host for the held camera's microphone from `from` (now when zero) for the
+// duration, under the given hold lease, and saves it to a temporary file. It returns once the
+// window has passed.
+func (c *Client) Capture(ctx context.Context, lease, endpointID string, from time.Time, duration time.Duration) (AudioCapture, error) {
+	req := host.CaptureRequest{EndpointID: endpointID, DurationSeconds: duration.Seconds()}
+	if !from.IsZero() {
+		req.From = &from
+	}
+	header := http.Header{LeaseHeader: []string{lease}}
+	resp, err := c.send(ctx, http.MethodPost, pathCapture, header, req)
+	if err != nil {
+		return AudioCapture{}, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	capture := AudioCapture{}
+	capture.From, _ = time.Parse(time.RFC3339Nano, resp.Header.Get(host.CaptureFromHeader))
+	capture.Until, _ = time.Parse(time.RFC3339Nano, resp.Header.Get(host.CaptureUntilHeader))
+	capture.FirstPacketAt, _ = time.Parse(time.RFC3339Nano, resp.Header.Get(host.AudioStartedAtHeader))
+	capture.Packets, _ = strconv.Atoi(resp.Header.Get(host.AudioPacketsHeader))
+	file, err := os.CreateTemp("", "portos-capture-*.ogg")
+	if err != nil {
+		return AudioCapture{}, err
+	}
+	_, copyErr := io.Copy(file, resp.Body)
+	closeErr := file.Close()
+	if err := errors.Join(copyErr, closeErr); err != nil {
+		_ = os.Remove(file.Name())
+		return AudioCapture{}, fmt.Errorf("%w: read the audio capture: %v", ErrTransport, err)
+	}
+	capture.Path = file.Name()
+	return capture, nil
 }
 
 // StatusError is a non-2xx reply from the host. Code and Message are set when

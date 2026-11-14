@@ -37,6 +37,8 @@ var (
 	ErrTalkbackBusy = errors.New("a clip is already playing on the held camera")
 	// ErrClipInvalid is audio the talkback track cannot play.
 	ErrClipInvalid = errors.New("the clip is not playable Ogg/Opus audio")
+	// ErrCaptureWindow is a capture outside the audio a stream keeps.
+	ErrCaptureWindow = errors.New("the capture window is outside the kept audio")
 )
 
 // Stream is one open camera session.
@@ -47,6 +49,9 @@ type Stream interface {
 	Play(ctx context.Context, ogg []byte) (time.Duration, error)
 	// Record copies the video into a file for the duration and returns it.
 	Record(ctx context.Context, duration time.Duration) (Clip, error)
+	// Capture returns the microphone audio that arrives from `from` for the duration, as
+	// Ogg/Opus. It may start in the past, within the audio the stream keeps.
+	Capture(ctx context.Context, from time.Time, duration time.Duration) (Audio, error)
 	// PTZ sends a camera PTZ message (step-ptz, move-ptz or stop-ptz) for the stream's own
 	// session and returns the reply from Port OS. Any sessionId in body is replaced.
 	PTZ(ctx context.Context, name string, body map[string]any) (*api.MessageRequest, error)
@@ -60,7 +65,8 @@ type Stream interface {
 	Close(ctx context.Context) error
 }
 
-// Opener opens a camera session on an endpoint for the given lifetime.
+// Opener opens a camera session on an endpoint for the given lifetime. The audio the session
+// carries is marked on ctx (holds.AudioOf).
 type Opener interface {
 	Open(ctx context.Context, endpointID string, lifetime time.Duration) (Stream, error)
 	// OpenShared attaches to the endpoint's shared session as a receive-only subscriber
@@ -80,11 +86,24 @@ type Frame struct {
 }
 
 // Clip is video recorded from a held camera: raw H264 or IVF at Path, to be played at
-// FrameRate. The held camera receives no audio. The receiver removes Path.
+// FrameRate. StartedAt is when its first frame arrived. The clip has no audio; a listening hold
+// captures it separately. The receiver removes Path.
 type Clip struct {
 	Path      string
 	Codec     string
 	FrameRate float64
+	StartedAt time.Time
+}
+
+// Audio is microphone audio captured from a listening held camera: Ogg/Opus at Path for the
+// window From to Until. FirstPacketAt is when its first packet arrived, zero when none did. The
+// receiver removes Path.
+type Audio struct {
+	Path          string
+	From          time.Time
+	Until         time.Time
+	FirstPacketAt time.Time
+	Packets       int
 }
 
 // Status is a hold's camera as `port session status` shows it.
@@ -99,6 +118,10 @@ type Status struct {
 	// ends; the hold ends with session_expired then.
 	Shared    bool       `json:"shared,omitempty"`
 	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
+	// Listening and Talking say whether the hold receives the camera's microphone and has a
+	// talkback track.
+	Listening bool `json:"listening,omitempty"`
+	Talking   bool `json:"talking,omitempty"`
 }
 
 // Service is the camera part of the session host.
@@ -110,6 +133,8 @@ type Service interface {
 	PlayAudio(ctx context.Context, holdID string, ogg []byte) (time.Duration, error)
 	// Record copies the held video into a file for the duration.
 	Record(ctx context.Context, holdID string, duration time.Duration) (Clip, error)
+	// Capture returns the held camera's microphone audio for the window.
+	Capture(ctx context.Context, holdID string, from time.Time, duration time.Duration) (Audio, error)
 	// PTZ sends a camera PTZ message (step-ptz, move-ptz or stop-ptz) with the hold's own
 	// session and returns the reply from Port OS.
 	PTZ(ctx context.Context, holdID, name string, body map[string]any) (*api.MessageRequest, error)
@@ -123,6 +148,7 @@ type held struct {
 	status     Status
 	closing    bool
 	shared     bool
+	audio      holds.Audio
 }
 
 type service struct {
@@ -143,13 +169,14 @@ func New(opener Opener, c clock.Clock, lost LostFunc) Service {
 }
 
 func (s *service) Open(ctx context.Context, holdID, endpointID string) error {
-	shared := holds.IsShared(ctx)
-	stream, err := s.openStream(ctx, endpointID, shared)
+	shared, audio := holds.IsShared(ctx), holds.AudioOf(ctx)
+	stream, err := s.openStream(ctx, endpointID, shared, audio)
 	if err != nil {
 		return err
 	}
 	now := s.clock.Now()
-	h := &held{endpointID: endpointID, stream: stream, shared: shared, status: Status{Live: true, OpenedAt: now, Shared: shared}}
+	status := Status{Live: true, OpenedAt: now, Shared: shared, Listening: audio.Listen, Talking: !shared || audio.Talk}
+	h := &held{endpointID: endpointID, stream: stream, shared: shared, audio: audio, status: status}
 	s.mu.Lock()
 	if old := s.holds[holdID]; old != nil {
 		s.mu.Unlock()
@@ -163,7 +190,8 @@ func (s *service) Open(ctx context.Context, holdID, endpointID string) error {
 	return nil
 }
 
-func (s *service) openStream(ctx context.Context, endpointID string, shared bool) (Stream, error) {
+func (s *service) openStream(ctx context.Context, endpointID string, shared bool, audio holds.Audio) (Stream, error) {
+	ctx = holds.WithAudio(ctx, audio)
 	if shared {
 		return s.opener.OpenShared(ctx, endpointID, Lifetime)
 	}
@@ -249,12 +277,12 @@ func (s *service) renew(holdID string) {
 		s.mu.Unlock()
 		return
 	}
-	endpointID, shared := h.endpointID, h.shared
+	endpointID, shared, audio := h.endpointID, h.shared, h.audio
 	s.mu.Unlock()
 
 	ctx, cancel := context.WithTimeout(context.Background(), renewTimeout)
 	defer cancel()
-	stream, err := s.openStream(ctx, endpointID, shared)
+	stream, err := s.openStream(ctx, endpointID, shared, audio)
 
 	s.mu.Lock()
 	h = s.holds[holdID]
@@ -317,8 +345,8 @@ func (s *service) liveStream(holdID string) (Stream, error) {
 }
 
 func (s *service) PlayAudio(ctx context.Context, holdID string, ogg []byte) (time.Duration, error) {
-	if s.isShared(holdID) {
-		return 0, &holds.Error{Code: holds.CodeSharedHoldNoTalkback, Message: "a shared camera hold has no talkback track because a call owns the speaker; hold the camera without --shared to play audio"}
+	if audio, shared := s.audioOf(holdID); shared && !audio.Talk {
+		return 0, &holds.Error{Code: holds.CodeSharedHoldNoTalkback, Message: "this shared camera hold has no talkback track, so a call can keep the speaker; hold the camera with --shared --talk to play audio"}
 	}
 	stream, err := s.liveStream(holdID)
 	if err != nil {
@@ -339,11 +367,36 @@ func (s *service) PlayAudio(ctx context.Context, holdID string, ogg []byte) (tim
 	}
 }
 
-func (s *service) isShared(holdID string) bool {
+// audioOf returns the hold's audio and whether its camera is shared.
+func (s *service) audioOf(holdID string) (holds.Audio, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	h := s.holds[holdID]
-	return h != nil && h.shared
+	if h == nil {
+		return holds.Audio{}, false
+	}
+	return h.audio, h.shared
+}
+
+func (s *service) Capture(ctx context.Context, holdID string, from time.Time, duration time.Duration) (Audio, error) {
+	if audio, _ := s.audioOf(holdID); !audio.Listen {
+		return Audio{}, &holds.Error{Code: holds.CodeHoldNotListening, Message: "this camera hold does not receive the camera's microphone; hold the camera with --listen to capture audio"}
+	}
+	stream, err := s.liveStream(holdID)
+	if err != nil {
+		return Audio{}, err
+	}
+	audio, err := stream.Capture(ctx, from, duration)
+	switch {
+	case err == nil:
+		return audio, nil
+	case errors.Is(err, ErrCaptureWindow):
+		return Audio{}, &holds.Error{Code: holds.CodeInvalidRequest, Message: err.Error()}
+	case ctx.Err() != nil:
+		return Audio{}, ctx.Err()
+	default:
+		return Audio{}, unavailable("capture the held camera's audio: " + err.Error())
+	}
 }
 
 func (s *service) PTZ(ctx context.Context, holdID, name string, body map[string]any) (*api.MessageRequest, error) {

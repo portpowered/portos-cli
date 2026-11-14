@@ -15,6 +15,7 @@ type hostAPI interface {
 	ListHolds(ctx context.Context) ([]hostclient.Hold, error)
 	Send(ctx context.Context, lease string, req *api.CreateMessageRequest) (*api.MessageRequest, error)
 	Record(ctx context.Context, lease, endpointID string, duration time.Duration) (hostclient.Recording, error)
+	Capture(ctx context.Context, lease, endpointID string, from time.Time, duration time.Duration) (hostclient.AudioCapture, error)
 }
 
 // hostSender sends through a hold on the session host under a lease.
@@ -35,6 +36,11 @@ func (h *hostSender) Record(ctx context.Context, endpointID string, duration tim
 	return h.host.Record(ctx, h.lease, endpointID, duration)
 }
 
+// Capture captures the held camera's microphone through the host under the lease.
+func (h *hostSender) Capture(ctx context.Context, endpointID string, from time.Time, duration time.Duration) (hostclient.AudioCapture, error) {
+	return h.host.Capture(ctx, h.lease, endpointID, from, duration)
+}
+
 // refusingSender answers every message with a typed FAILED reply, so a caller
 // that holds a lease with no live hold behind it never reaches the cloud.
 type refusingSender struct {
@@ -53,4 +59,9 @@ func (r *refusingSender) Send(context.Context, *api.CreateMessageRequest, string
 // Record refuses as Send does, so a stale lease exits as a refused message would.
 func (r *refusingSender) Record(context.Context, string, time.Duration) (hostclient.Recording, error) {
 	return hostclient.Recording{}, &apiclient.MessageRequestFailed{Request: messages.Refusal(time.Now(), r.endpointID, r.code, r.message)}
+}
+
+// Capture refuses as Send does.
+func (r *refusingSender) Capture(context.Context, string, time.Time, time.Duration) (hostclient.AudioCapture, error) {
+	return hostclient.AudioCapture{}, &apiclient.MessageRequestFailed{Request: messages.Refusal(time.Now(), r.endpointID, r.code, r.message)}
 }

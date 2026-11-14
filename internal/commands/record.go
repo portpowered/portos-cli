@@ -8,11 +8,14 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/portpowered/portos-cli/internal/api"
 	"github.com/portpowered/portos-cli/internal/config"
 	"github.com/portpowered/portos-cli/internal/exitcode"
+	"github.com/portpowered/portos-cli/internal/hostclient"
 	"github.com/portpowered/portos-cli/internal/logging"
 	"github.com/portpowered/portos-cli/internal/output"
 	"github.com/portpowered/portos-cli/internal/transport"
@@ -61,6 +64,8 @@ type RecordParams struct {
 	Duration   time.Duration
 	// RelayOnly connects only through the Port OS relay.
 	RelayOnly bool
+	// AudioOnly writes only the sound, to an audio file (.ogg, .opus, .wav, .mp3, .m4a, .flac).
+	AudioOnly bool
 }
 
 // Run establishes an RTC session via the recorder for the given duration, then muxes the video
@@ -75,6 +80,11 @@ func (c *RecordCommand) Run(ctx context.Context, params RecordParams) error {
 	}
 	if params.Duration <= 0 {
 		return fmt.Errorf("duration must be positive (use --duration)")
+	}
+	if params.AudioOnly {
+		if err := checkAudioOutput(params.OutputPath); err != nil {
+			return exitcode.NewInvalidArgument(err)
+		}
 	}
 
 	// Muxing is the last step; fail before a 30 s capture rather than after it.
@@ -128,6 +138,12 @@ func (c *RecordCommand) Run(ctx context.Context, params RecordParams) error {
 	}
 	defer result.Remove()
 
+	if params.AudioOnly {
+		if !result.HasAudio() {
+			return errors.New("the device sent no audio, so there is nothing to write")
+		}
+		return c.writeAudioOnly(ctx, result.AudioPath, params.OutputPath)
+	}
 	res, err := c.mux(ctx, result, params.OutputPath, params.Duration)
 	if err != nil {
 		return err
@@ -135,12 +151,40 @@ func (c *RecordCommand) Run(ctx context.Context, params RecordParams) error {
 	return c.print(res)
 }
 
-// runHeld records the held camera through the session host. The held camera receives no audio
-// (holding it never turns a robot microphone on), so the file is video only.
+// runHeld records the held camera through the session host. A hold opened with --listen also
+// captures the camera's microphone over the same window and the file gets sound; otherwise the
+// camera never turns a microphone on and the file is video only.
 func (c *RecordCommand) runHeld(ctx context.Context, sender transport.Sender, params RecordParams) error {
 	c.logger.Logger().Info("recording the held camera",
 		zap.String("endpoint_id", params.EndpointID), zap.Duration("duration", params.Duration))
+	if params.AudioOnly {
+		capture, err := transport.CaptureHeld(ctx, sender, params.EndpointID, time.Time{}, params.Duration)
+		if err != nil {
+			return fmt.Errorf("record the held camera's audio: %w", err)
+		}
+		defer func() { _ = os.Remove(capture.Path) }()
+		if capture.Packets == 0 {
+			return errors.New("the held camera heard no audio in the window")
+		}
+		return c.writeAudioOnly(ctx, capture.Path, params.OutputPath)
+	}
+	// The video starts at the next keyframe, so the capture runs a little longer and the mux
+	// trims it to the video.
+	captureCtx, cancelCapture := context.WithCancel(ctx)
+	defer cancelCapture()
+	audio := make(chan heldAudioResult, 1)
+	go func() {
+		capture, err := transport.CaptureHeld(captureCtx, sender, params.EndpointID, time.Time{}, params.Duration+heldKeyframeSlack)
+		audio <- heldAudioResult{capture: capture, err: err}
+	}()
 	clip, err := transport.RecordHeld(ctx, sender, params.EndpointID, params.Duration)
+	if err != nil {
+		cancelCapture() // no video, so the sound is not wanted
+	}
+	sound := <-audio
+	if sound.err == nil {
+		defer func() { _ = os.Remove(sound.capture.Path) }()
+	}
 	if err != nil {
 		return fmt.Errorf("record the held camera: %w", err)
 	}
@@ -148,13 +192,51 @@ func (c *RecordCommand) runHeld(ctx context.Context, sender transport.Sender, pa
 	if err := checkContainerSupportsVideo(params.OutputPath, clip.Codec); err != nil {
 		return exitcode.NewInvalidArgument(err)
 	}
-	rec := &RecorderResult{TempPath: clip.Path, VideoCodec: clip.Codec, FrameRate: clip.FrameRate, VideoSpan: params.Duration}
+	rec := &RecorderResult{TempPath: clip.Path, VideoCodec: clip.Codec, FrameRate: clip.FrameRate, VideoSpan: params.Duration, VideoStart: clip.StartedAt}
+	message := "Recorded from the held camera, which does not listen (hold it with --listen for sound)"
+	switch {
+	case sound.err != nil && exitcode.Code(sound.err) != exitcode.ExitHold:
+		c.logger.Logger().Warn("held camera audio capture failed; the recording is video only", zap.Error(sound.err))
+		message = "Recorded from the held camera; its audio capture failed, so the file is video only"
+	case sound.err == nil && sound.capture.Packets > 0 && !clip.StartedAt.IsZero():
+		rec.AudioPath, rec.AudioStart = sound.capture.Path, sound.capture.FirstPacketAt
+		message = "Recorded from the held camera with its microphone"
+	case sound.err == nil:
+		message = "Recorded from the held camera, which heard no audio"
+	}
 	res, err := c.mux(ctx, rec, params.OutputPath, params.Duration)
 	if err != nil {
 		return err
 	}
-	res.Message = "Recorded from the held camera, which carries no audio"
+	res.Message = message
 	return c.print(res)
+}
+
+// heldKeyframeSlack is how much longer than the video a held recording's audio capture runs,
+// to cover the wait for the keyframe the video starts at.
+const heldKeyframeSlack = 5 * time.Second
+
+type heldAudioResult struct {
+	capture hostclient.AudioCapture
+	err     error
+}
+
+// writeAudioOnly writes received Ogg/Opus to the audio output and prints the result.
+func (c *RecordCommand) writeAudioOnly(ctx context.Context, oggPath, outPath string) error {
+	if err := writeAudio(ctx, oggPath, outPath); err != nil {
+		return err
+	}
+	res := RecordResult{Success: true, OutputPath: outPath, Message: "Audio saved", HasAudio: true, AudioCodec: "opus"}
+	if seconds, err := probeDuration(ctx, outPath); err == nil {
+		res.DurationSeconds = math.Round(seconds*100) / 100
+	}
+	if ext := strings.ToLower(filepath.Ext(outPath)); ext != ".ogg" && ext != ".opus" {
+		res.AudioCodec = strings.TrimPrefix(ext, ".")
+	}
+	if c.formatter.IsJSON() {
+		return c.formatter.Print(res)
+	}
+	return c.formatter.Print(fmt.Sprintf("Audio saved to %s (%.1f s)", outPath, res.DurationSeconds))
 }
 
 func (c *RecordCommand) print(res RecordResult) error {

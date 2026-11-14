@@ -35,16 +35,21 @@ type talkbackPacket struct {
 	duration time.Duration
 }
 
-// addTalkback adds the send-only Opus track clips are written to. The camera never sends audio
-// back on it, so holding the camera does not turn a robot's microphone on.
-func (h *HeldCamera) addTalkback() error {
+// addTalkback adds the Opus track clips are written to. It is send-only unless listen is set, so
+// holding the camera does not turn a robot's microphone on; with listen it is send-receive and
+// the camera's microphone comes back on it.
+func (h *HeldCamera) addTalkback(listen bool) error {
 	track, err := webrtc.NewTrackLocalStaticSample(webrtc.RTPCodecCapability{
 		MimeType: webrtc.MimeTypeOpus, ClockRate: talkbackClockRate, Channels: talkbackChannels,
 	}, "talkback", "portos-cli")
 	if err != nil {
 		return fmt.Errorf("create talkback track: %w", err)
 	}
-	transceiver, err := h.pc.AddTransceiverFromTrack(track, webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionSendonly})
+	direction := webrtc.RTPTransceiverDirectionSendonly
+	if listen {
+		direction = webrtc.RTPTransceiverDirectionSendrecv
+	}
+	transceiver, err := h.pc.AddTransceiverFromTrack(track, webrtc.RTPTransceiverInit{Direction: direction})
 	if err != nil {
 		return fmt.Errorf("add talkback transceiver: %w", err)
 	}

@@ -32,10 +32,22 @@ const openTimeout = 180 * time.Second
 // LeaseHeader carries the hold lease on POST /message-requests.
 const LeaseHeader = "Portos-Lease"
 
-// Headers of a POST /recordings reply, whose body is the raw video.
+// Headers of a POST /recordings reply, whose body is the raw video. VideoStartedAtHeader is
+// when the first frame arrived (RFC 3339, nanoseconds), to align a capture of the microphone.
 const (
-	VideoCodecHeader = "Portos-Video-Codec"
-	FrameRateHeader  = "Portos-Frame-Rate"
+	VideoCodecHeader     = "Portos-Video-Codec"
+	FrameRateHeader      = "Portos-Frame-Rate"
+	VideoStartedAtHeader = "Portos-Video-Started-At"
+)
+
+// Headers of a POST /audio-captures reply, whose body is Ogg/Opus: the window asked for, when
+// the first packet in it arrived (absent when none did), and how many packets it holds. Times
+// are RFC 3339 with nanoseconds.
+const (
+	CaptureFromHeader    = "Portos-Capture-From"
+	CaptureUntilHeader   = "Portos-Capture-Until"
+	AudioStartedAtHeader = "Portos-Audio-Started-At"
+	AudioPacketsHeader   = "Portos-Audio-Packets"
 )
 
 // MaxRecordingSeconds is the longest recording POST /recordings takes.
@@ -79,6 +91,10 @@ type CameraStatus struct {
 	// session ends, and the hold ends with it.
 	Shared    bool       `json:"shared,omitempty"`
 	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
+	// Listening is true when the hold receives the camera's microphone, Talking when it has a
+	// talkback track that play-audio plays on.
+	Listening bool `json:"listening,omitempty"`
+	Talking   bool `json:"talking,omitempty"`
 }
 
 // HoldStatus is the JSON shape of one hold. It never carries the lease.
@@ -109,6 +125,9 @@ type OpenHoldRequest struct {
 	DeadManSeconds int      `json:"deadManSeconds,omitempty"`
 	// Shared attaches the camera as one subscriber of the endpoint's shared session.
 	Shared bool `json:"shared,omitempty"`
+	// Listen receives the camera's microphone; Talk gives a shared camera a talkback track.
+	Listen bool `json:"listen,omitempty"`
+	Talk   bool `json:"talk,omitempty"`
 }
 
 // RecordRequest is the body of POST /recordings.
@@ -118,16 +137,38 @@ type RecordRequest struct {
 }
 
 // Recording is video recorded from a held camera, at Path on the host's disk: raw H264 or IVF
-// to be played at FrameRate. The route sends it as the reply body and removes it.
+// to be played at FrameRate, whose first frame arrived at StartedAt. The route sends it as the
+// reply body and removes it.
 type Recording struct {
 	Path      string
 	Codec     string
 	FrameRate float64
+	StartedAt time.Time
+}
+
+// CaptureRequest is the body of POST /audio-captures. From is when the window starts (now when
+// absent); it may be up to two minutes in the past.
+type CaptureRequest struct {
+	EndpointID      string     `json:"endpointId"`
+	From            *time.Time `json:"from,omitempty"`
+	DurationSeconds float64    `json:"durationSeconds"`
+}
+
+// AudioCapture is microphone audio captured from a listening held camera, as Ogg/Opus at Path
+// on the host's disk. The route sends it as the reply body and removes it.
+type AudioCapture struct {
+	Path          string
+	From          time.Time
+	Until         time.Time
+	FirstPacketAt time.Time
+	Packets       int
 }
 
 // RecordingService records a held camera under a hold's lease.
 type RecordingService interface {
 	Record(ctx context.Context, lease, endpointID string, duration time.Duration) (Recording, error)
+	// Capture returns the camera's microphone audio for the window, under a listening hold.
+	Capture(ctx context.Context, lease, endpointID string, from time.Time, duration time.Duration) (AudioCapture, error)
 }
 
 // ListHoldsResponse is the reply to GET /holds.
@@ -337,9 +378,52 @@ func mountRecordings(mux *http.ServeMux, recordings RecordingService) {
 		w.Header().Set("Content-Type", "application/octet-stream")
 		w.Header().Set(VideoCodecHeader, clip.Codec)
 		w.Header().Set(FrameRateHeader, strconv.FormatFloat(clip.FrameRate, 'f', -1, 64))
+		if !clip.StartedAt.IsZero() {
+			w.Header().Set(VideoStartedAtHeader, clip.StartedAt.UTC().Format(time.RFC3339Nano))
+		}
 		w.WriteHeader(http.StatusOK)
 		_, _ = io.Copy(w, file)
 	})
+	mux.HandleFunc("POST /audio-captures", func(w http.ResponseWriter, r *http.Request) {
+		serveCapture(w, r, recordings)
+	})
+}
+
+// serveCapture serves POST /audio-captures: the held camera's microphone for the window, as
+// Ogg/Opus with the window and first packet in headers. It replies once the window has passed.
+func serveCapture(w http.ResponseWriter, r *http.Request, recordings RecordingService) {
+	var req CaptureRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.EndpointID == "" ||
+		req.DurationSeconds <= 0 || req.DurationSeconds > MaxRecordingSeconds {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "an audio capture needs endpointId and durationSeconds between 0 and 600")
+		return
+	}
+	var from time.Time
+	if req.From != nil {
+		from = *req.From
+	}
+	duration := time.Duration(req.DurationSeconds * float64(time.Second))
+	audio, err := recordings.Capture(r.Context(), r.Header.Get(LeaseHeader), req.EndpointID, from, duration)
+	if err != nil {
+		writeHoldError(w, err)
+		return
+	}
+	defer func() { _ = os.Remove(audio.Path) }()
+	file, err := os.Open(audio.Path)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, CodeHoldFailed, "read the audio capture: "+err.Error())
+		return
+	}
+	defer func() { _ = file.Close() }()
+	w.Header().Set("Content-Type", "audio/ogg")
+	w.Header().Set(CaptureFromHeader, audio.From.UTC().Format(time.RFC3339Nano))
+	w.Header().Set(CaptureUntilHeader, audio.Until.UTC().Format(time.RFC3339Nano))
+	if !audio.FirstPacketAt.IsZero() {
+		w.Header().Set(AudioStartedAtHeader, audio.FirstPacketAt.UTC().Format(time.RFC3339Nano))
+	}
+	w.Header().Set(AudioPacketsHeader, strconv.Itoa(audio.Packets))
+	w.WriteHeader(http.StatusOK)
+	_, _ = io.Copy(w, file)
 }
 
 func writeHoldError(w http.ResponseWriter, err error) {

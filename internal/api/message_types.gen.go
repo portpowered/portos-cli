@@ -1401,7 +1401,7 @@ var MessagesTypes = map[string]MessageTypeInfo{
 		Type:            "message",
 		Directionality:  "out",
 		Title:           "CameraInterfacePtzPositionMessage",
-		Description:     "Where a pan-tilt camera points after a step-ptz, move-ptz or stop-ptz request, estimated from the steps the provider has sent and how long and how fast the camera has turned in this camera session. Pan counts degrees to the right of panReference and tilt counts degrees up from tiltReference. A reference is the end of the range once the camera has been turned to that end in this session. Before that it is the end as the camera's last session left it, when the provider remembers one, and otherwise the session start. A remembered reference holds only if nothing else turned the camera between sessions, so check it against a picture before relying on it.",
+		Description:     "Where a pan-tilt camera points after a step-ptz, move-ptz or stop-ptz request, estimated from the steps the provider has sent and how long and how fast the camera has turned in this camera session. Pan counts degrees to the right of panReference and tilt counts degrees up from tiltReference. A reference is the end of the range once the camera has been turned to that end in this session, and the session start before that.",
 		FuncName:        "CameraInterfacePtzPosition",
 		PayloadTypeName: "CameraInterfacePtzPositionMessage",
 		NamespaceConst:  "INTERFACE_PORTOS_CAMERA",

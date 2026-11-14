@@ -77,9 +77,12 @@ const (
 	CodeCameraUnavailable = "camera_unavailable"
 	// CodeTalkbackBusy is a clip sent while another plays on the held camera.
 	CodeTalkbackBusy = "talkback_busy"
-	// CodeSharedHoldNoTalkback is play-audio under a shared camera hold, which carries no
-	// talkback track because a call owns the speaker.
+	// CodeSharedHoldNoTalkback is play-audio under a shared camera hold opened without --talk,
+	// which carries no talkback track so a call can keep the speaker.
 	CodeSharedHoldNoTalkback = "shared_hold_no_talkback"
+	// CodeHoldNotListening is an audio capture under a camera hold opened without --listen,
+	// which never receives the camera's microphone.
+	CodeHoldNotListening = "hold_not_listening"
 )
 
 type sharedKey struct{}
@@ -87,6 +90,26 @@ type sharedKey struct{}
 // WithShared marks ctx so the camera session a hold opens attaches as a shared subscriber.
 func WithShared(ctx context.Context) context.Context {
 	return context.WithValue(ctx, sharedKey{}, true)
+}
+
+// Audio is what a camera hold does with the camera's audio. Listen receives its microphone; Talk
+// gives a shared camera a talkback track (a single-peer camera always has one).
+type Audio struct {
+	Listen bool `json:"listen,omitempty"`
+	Talk   bool `json:"talk,omitempty"`
+}
+
+type audioKey struct{}
+
+// WithAudio marks ctx with the audio the camera session a hold opens carries.
+func WithAudio(ctx context.Context, audio Audio) context.Context {
+	return context.WithValue(ctx, audioKey{}, audio)
+}
+
+// AudioOf reads the mark WithAudio left; without one the camera only talks (single-peer).
+func AudioOf(ctx context.Context) Audio {
+	audio, _ := ctx.Value(audioKey{}).(Audio)
+	return audio
 }
 
 // IsShared reports whether ctx asks for a shared camera session.

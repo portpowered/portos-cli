@@ -141,7 +141,22 @@ func (r recordings) Record(ctx context.Context, lease, endpointID string, durati
 	if err != nil {
 		return host.Recording{}, coded(err)
 	}
-	return host.Recording{Path: clip.Path, Codec: clip.Codec, FrameRate: clip.FrameRate}, nil
+	return host.Recording{Path: clip.Path, Codec: clip.Codec, FrameRate: clip.FrameRate, StartedAt: clip.StartedAt}, nil
+}
+
+func (r recordings) Capture(ctx context.Context, lease, endpointID string, from time.Time, duration time.Duration) (host.AudioCapture, error) {
+	if r.camera == nil {
+		return host.AudioCapture{}, coded(errNoCamera)
+	}
+	hold, err := r.holds.Authorize(lease, endpointID, holds.KindCamera)
+	if err != nil {
+		return host.AudioCapture{}, coded(err)
+	}
+	audio, err := r.camera.Capture(ctx, hold.ID, from, duration)
+	if err != nil {
+		return host.AudioCapture{}, coded(err)
+	}
+	return host.AudioCapture{Path: audio.Path, From: audio.From, Until: audio.Until, FirstPacketAt: audio.FirstPacketAt, Packets: audio.Packets}, nil
 }
 
 // LoginCheck returns the check holds run before opening: the stored
@@ -201,7 +216,7 @@ func (a *holdAdapter) status(h holds.Hold) host.HoldStatus {
 			out.Camera = &host.CameraStatus{
 				Live: st.Live, OpenedAt: st.OpenedAt, RenewsAt: st.RenewsAt, Renewals: st.Renewals,
 				LastFrameAt: st.LastFrame, LostReason: st.LostReason,
-				Shared: st.Shared, ExpiresAt: st.ExpiresAt,
+				Shared: st.Shared, ExpiresAt: st.ExpiresAt, Listening: st.Listening, Talking: st.Talking,
 			}
 		}
 	}
@@ -227,6 +242,15 @@ func (a *holdAdapter) Open(ctx context.Context, req host.OpenHoldRequest) (host.
 			return host.OpenedHold{}, &host.CodedError{Code: host.CodeInvalidRequest, Message: "a shared hold needs the camera kind"}
 		}
 		ctx = holds.WithShared(ctx)
+	}
+	if req.Listen || req.Talk {
+		if !slices.Contains(kinds, holds.KindCamera) {
+			return host.OpenedHold{}, &host.CodedError{Code: host.CodeInvalidRequest, Message: "listen and talk need the camera kind"}
+		}
+		if req.Talk && !req.Shared {
+			return host.OpenedHold{}, &host.CodedError{Code: host.CodeInvalidRequest, Message: "talk is for a shared hold; a single-peer camera hold always talks"}
+		}
+		ctx = holds.WithAudio(ctx, holds.Audio{Listen: req.Listen, Talk: req.Talk})
 	}
 	h, err := a.holds.Open(ctx, req.EndpointID, kinds, time.Duration(req.DeadManSeconds)*time.Second)
 	if err != nil {

@@ -78,3 +78,91 @@ func TestRecordUnderAHoldRefusals(t *testing.T) {
 		t.Fatalf("VP8 into .mp4 exits %d (%v), want %d", got, err, exitcode.ExitInvalid)
 	}
 }
+
+// listeningRecordingHost is a held camera that records video and, when its hold listens, audio.
+type listeningRecordingHost struct {
+	recordingHost
+	ogg        string
+	captureErr error
+	captured   time.Duration
+}
+
+func (h *listeningRecordingHost) Capture(_ context.Context, _ string, from time.Time, d time.Duration) (hostclient.AudioCapture, error) {
+	h.captured = d
+	if h.captureErr != nil {
+		return hostclient.AudioCapture{}, h.captureErr
+	}
+	data, err := os.ReadFile(h.ogg)
+	if err != nil {
+		return hostclient.AudioCapture{}, err
+	}
+	file, err := os.CreateTemp("", "held-audio-*.ogg")
+	if err != nil {
+		return hostclient.AudioCapture{}, err
+	}
+	_, _ = file.Write(data)
+	_ = file.Close()
+	if from.IsZero() {
+		from = time.Now()
+	}
+	return hostclient.AudioCapture{Path: file.Name(), From: from, Until: from.Add(d), FirstPacketAt: h.clip.StartedAt, Packets: 150}, nil
+}
+
+func TestRecordUnderAListeningHoldAddsTheMicrophone(t *testing.T) {
+	ogg := writeFile(t, "mic.ogg", oggClip(t, 3))
+	host := &listeningRecordingHost{
+		recordingHost: recordingHost{clip: hostclient.Recording{Path: rawH264(t, 3), Codec: videoCodecH264, FrameRate: 15, StartedAt: time.Now()}},
+		ogg:           ogg,
+	}
+	formatter := &recordingFormatter{json: true}
+	cmd := NewRecordCommand(nil, fixedResolver{host}, formatter, logging.NewLoggerRef(), nil)
+	out := filepath.Join(t.TempDir(), "held.mp4")
+	if err := cmd.Run(t.Context(), RecordParams{EndpointID: "ep/1", OutputPath: out, Duration: 3 * time.Second}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if host.captured != 3*time.Second+heldKeyframeSlack {
+		t.Fatalf("captured %v of audio, want the video plus the keyframe slack", host.captured)
+	}
+	result := formatter.printed[0].(RecordResult)
+	if !result.Success || !result.HasAudio || result.AudioCodec != "aac" || result.Message != "Recorded from the held camera with its microphone" {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestRecordUnderADeafHoldIsVideoOnly(t *testing.T) {
+	host := &listeningRecordingHost{
+		recordingHost: recordingHost{clip: hostclient.Recording{Path: rawH264(t, 2), Codec: videoCodecH264, FrameRate: 15, StartedAt: time.Now()}},
+		captureErr:    &apiclient.MessageRequestFailed{Request: messages.Refusal(time.Now(), "ep/1", "hold_not_listening", "hold it with --listen")},
+	}
+	formatter := &recordingFormatter{json: true}
+	cmd := NewRecordCommand(nil, fixedResolver{host}, formatter, logging.NewLoggerRef(), nil)
+	if err := cmd.Run(t.Context(), RecordParams{EndpointID: "ep/1", OutputPath: filepath.Join(t.TempDir(), "held.mp4"), Duration: 2 * time.Second}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	result := formatter.printed[0].(RecordResult)
+	if result.HasAudio || result.Message != "Recorded from the held camera, which does not listen (hold it with --listen for sound)" {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestRecordAudioOnlyUnderAHold(t *testing.T) {
+	host := &listeningRecordingHost{ogg: writeFile(t, "mic.ogg", oggClip(t, 2))}
+	formatter := &recordingFormatter{json: true}
+	cmd := NewRecordCommand(nil, fixedResolver{host}, formatter, logging.NewLoggerRef(), nil)
+	out := filepath.Join(t.TempDir(), "room.wav")
+	if err := cmd.Run(t.Context(), RecordParams{EndpointID: "ep/1", OutputPath: out, Duration: 2 * time.Second, AudioOnly: true}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if host.captured != 2*time.Second || host.duration != 0 {
+		t.Fatalf("captured %v and recorded %v, want 2 s of audio and no video", host.captured, host.duration)
+	}
+	result := formatter.printed[0].(RecordResult)
+	if !result.HasAudio || result.AudioCodec != "wav" || result.DurationSeconds < 1.9 || result.DurationSeconds > 2.2 {
+		t.Fatalf("result = %+v", result)
+	}
+
+	err := cmd.Run(t.Context(), RecordParams{EndpointID: "ep/1", OutputPath: filepath.Join(t.TempDir(), "room.mp4"), Duration: time.Second, AudioOnly: true})
+	if exitcode.Code(err) != exitcode.ExitInvalid {
+		t.Fatalf("--audio-only into .mp4: %v, want exit %d", err, exitcode.ExitInvalid)
+	}
+}
