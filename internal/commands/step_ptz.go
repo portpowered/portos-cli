@@ -153,15 +153,27 @@ func describeStepPTZ(result StepPTZResult) string {
 // describePosition says where the camera points, in words an agent can plan the next move from,
 // and which axes are still turning.
 func describePosition(p *api.CameraInterfacePtzPositionMessage) string {
-	pan := fmt.Sprintf("pan %.0f° right of the left end (range 0 to %.0f°)", p.PanDegrees, p.PanRangeDegrees)
-	if p.PanReference != api.CameraInterfacePtzPositionMessagePanReferenceLEFTEND {
+	var pan string
+	switch p.PanReference {
+	case api.CameraInterfacePtzPositionMessagePanReferenceLEFTEND:
+		pan = fmt.Sprintf("pan %.0f° right of the left end (range 0 to %.0f°)", p.PanDegrees, p.PanRangeDegrees)
+	case api.CameraInterfacePtzPositionMessagePanReferenceREMEMBEREDLEFTEND:
+		pan = fmt.Sprintf("pan %.0f° right of the left end as the last session left it (range 0 to %.0f°; "+
+			"check a snapshot or turn to an end)", p.PanDegrees, p.PanRangeDegrees)
+	default:
 		pan = fmt.Sprintf("pan %s the session start (left end unknown until you turn to an end)", signedDegrees(p.PanDegrees, "right of", "left of"))
 	}
 	if p.PanMoving {
 		pan += ", still turning"
 	}
-	tilt := fmt.Sprintf("tilt %.0f° up from the bottom end (range 0 to %.0f°)", p.TiltDegrees, p.TiltRangeDegrees)
-	if p.TiltReference != api.CameraInterfacePtzPositionMessageTiltReferenceBOTTOMEND {
+	var tilt string
+	switch p.TiltReference {
+	case api.CameraInterfacePtzPositionMessageTiltReferenceBOTTOMEND:
+		tilt = fmt.Sprintf("tilt %.0f° up from the bottom end (range 0 to %.0f°)", p.TiltDegrees, p.TiltRangeDegrees)
+	case api.CameraInterfacePtzPositionMessageTiltReferenceREMEMBEREDBOTTOMEND:
+		tilt = fmt.Sprintf("tilt %.0f° up from the bottom end as the last session left it (range 0 to %.0f°; "+
+			"check a snapshot or turn to an end)", p.TiltDegrees, p.TiltRangeDegrees)
+	default:
 		tilt = fmt.Sprintf("tilt %s the session start (bottom end unknown until you turn to an end)", signedDegrees(p.TiltDegrees, "above", "below"))
 	}
 	if p.TiltMoving {

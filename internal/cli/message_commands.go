@@ -116,8 +116,9 @@ its range, so --degrees 360 turns it all the way to that end.
 
 The reply says how far the camera turned and where it now points: pan in degrees
 right of the left end and tilt in degrees up from the bottom end, once the camera
-has been turned to an end in this session, and from the session start before
-that. Turn to an end first (LEFT --degrees 360, DOWN --degrees 360) to know
+has been turned to an end in this session. Before that they count from the ends
+as the camera's last session left them (REMEMBERED_LEFT_END, REMEMBERED_BOTTOM_END)
+when the provider remembers them, and from the session start otherwise. Turn to an end first (LEFT --degrees 360, DOWN --degrees 360) to know
 exactly where the camera points.
 
 Pass the hold's lease with --lease or PORTOS_LEASE. The host sends the turn in

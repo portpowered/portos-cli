@@ -159,3 +159,15 @@ func TestStepPTZWithoutAPositionAnswerSaysSo(t *testing.T) {
 		t.Fatalf("printed %q", formatter.printed)
 	}
 }
+
+func TestDescribePosition_SaysARememberedAngleNeedsChecking(t *testing.T) {
+	position := &api.CameraInterfacePtzPositionMessage{
+		PanDegrees: 170, PanRangeDegrees: 340, PanReference: api.CameraInterfacePtzPositionMessagePanReferenceREMEMBEREDLEFTEND,
+		TiltDegrees: 40, TiltRangeDegrees: 169, TiltReference: api.CameraInterfacePtzPositionMessageTiltReferenceREMEMBEREDBOTTOMEND,
+	}
+	want := "pan 170° right of the left end as the last session left it (range 0 to 340°; check a snapshot or turn to an end), " +
+		"tilt 40° up from the bottom end as the last session left it (range 0 to 169°; check a snapshot or turn to an end)"
+	if text := describePosition(position); text != want {
+		t.Fatalf("text = %q", text)
+	}
+}

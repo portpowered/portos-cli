@@ -282,14 +282,16 @@ const (
 
 // Defines values for CameraInterfacePtzPositionMessagePanReference.
 const (
-	CameraInterfacePtzPositionMessagePanReferenceLEFTEND      CameraInterfacePtzPositionMessagePanReference = "LEFT_END"
-	CameraInterfacePtzPositionMessagePanReferenceSESSIONSTART CameraInterfacePtzPositionMessagePanReference = "SESSION_START"
+	CameraInterfacePtzPositionMessagePanReferenceLEFTEND           CameraInterfacePtzPositionMessagePanReference = "LEFT_END"
+	CameraInterfacePtzPositionMessagePanReferenceREMEMBEREDLEFTEND CameraInterfacePtzPositionMessagePanReference = "REMEMBERED_LEFT_END"
+	CameraInterfacePtzPositionMessagePanReferenceSESSIONSTART      CameraInterfacePtzPositionMessagePanReference = "SESSION_START"
 )
 
 // Defines values for CameraInterfacePtzPositionMessageTiltReference.
 const (
-	CameraInterfacePtzPositionMessageTiltReferenceBOTTOMEND    CameraInterfacePtzPositionMessageTiltReference = "BOTTOM_END"
-	CameraInterfacePtzPositionMessageTiltReferenceSESSIONSTART CameraInterfacePtzPositionMessageTiltReference = "SESSION_START"
+	CameraInterfacePtzPositionMessageTiltReferenceBOTTOMEND           CameraInterfacePtzPositionMessageTiltReference = "BOTTOM_END"
+	CameraInterfacePtzPositionMessageTiltReferenceREMEMBEREDBOTTOMEND CameraInterfacePtzPositionMessageTiltReference = "REMEMBERED_BOTTOM_END"
+	CameraInterfacePtzPositionMessageTiltReferenceSESSIONSTART        CameraInterfacePtzPositionMessageTiltReference = "SESSION_START"
 )
 
 // Defines values for CameraInterfaceStartStreamingMessageStreamingProtocol.
@@ -3775,7 +3777,7 @@ type CameraInterfaceMovePtzMessageEnvelope struct {
 // CameraInterfaceMovePtzMessageHeader Identifies this capability message.
 type CameraInterfaceMovePtzMessageHeader = MessageHeader
 
-// CameraInterfacePtzPositionMessage Where a pan-tilt camera points after a step-ptz, move-ptz or stop-ptz request, estimated from the steps the provider has sent and how long and how fast the camera has turned in this camera session. Pan counts degrees to the right of panReference and tilt counts degrees up from tiltReference. A reference is the end of the range once the camera has been turned to that end in this session, and the session start before that.
+// CameraInterfacePtzPositionMessage Where a pan-tilt camera points after a step-ptz, move-ptz or stop-ptz request, estimated from the steps the provider has sent and how long and how fast the camera has turned in this camera session. Pan counts degrees to the right of panReference and tilt counts degrees up from tiltReference. A reference is the end of the range once the camera has been turned to that end in this session. Before that it is the end as the camera's last session left it, when the provider remembers one, and otherwise the session start. A remembered reference holds only if nothing else turned the camera between sessions, so check it against a picture before relying on it.
 type CameraInterfacePtzPositionMessage struct {
 	// MovedDegrees How far this request turned the camera, in degrees, after stopping at the end of the range. It is 0 for a move-ptz without seconds, which answers as soon as the camera starts turning.
 	MovedDegrees float32 `json:"movedDegrees"`
@@ -3789,7 +3791,7 @@ type CameraInterfacePtzPositionMessage struct {
 	// PanRangeDegrees How far the camera can pan from its left end to its right end.
 	PanRangeDegrees float32 `json:"panRangeDegrees"`
 
-	// PanReference LEFT_END once the camera has been turned to its left or right end in this session, so panDegrees runs from 0 to panRangeDegrees.
+	// PanReference LEFT_END once the camera has been turned to its left or right end in this session, so panDegrees runs from 0 to panRangeDegrees. REMEMBERED_LEFT_END counts from the left end as the camera's last session left it, until this session reaches an end.
 	PanReference CameraInterfacePtzPositionMessagePanReference `json:"panReference"`
 
 	// TiltDegrees Degrees up from tiltReference. Negative means below the session start.
@@ -3801,19 +3803,19 @@ type CameraInterfacePtzPositionMessage struct {
 	// TiltRangeDegrees How far the camera can tilt from its bottom end to its top end.
 	TiltRangeDegrees float32 `json:"tiltRangeDegrees"`
 
-	// TiltReference BOTTOM_END once the camera has been turned to its top or bottom end in this session, so tiltDegrees runs from 0 to tiltRangeDegrees.
+	// TiltReference BOTTOM_END once the camera has been turned to its top or bottom end in this session, so tiltDegrees runs from 0 to tiltRangeDegrees. REMEMBERED_BOTTOM_END counts from the bottom end as the camera's last session left it, until this session reaches an end.
 	TiltReference CameraInterfacePtzPositionMessageTiltReference `json:"tiltReference"`
 }
 
-// CameraInterfacePtzPositionMessagePanReference LEFT_END once the camera has been turned to its left or right end in this session, so panDegrees runs from 0 to panRangeDegrees.
+// CameraInterfacePtzPositionMessagePanReference LEFT_END once the camera has been turned to its left or right end in this session, so panDegrees runs from 0 to panRangeDegrees. REMEMBERED_LEFT_END counts from the left end as the camera's last session left it, until this session reaches an end.
 type CameraInterfacePtzPositionMessagePanReference string
 
-// CameraInterfacePtzPositionMessageTiltReference BOTTOM_END once the camera has been turned to its top or bottom end in this session, so tiltDegrees runs from 0 to tiltRangeDegrees.
+// CameraInterfacePtzPositionMessageTiltReference BOTTOM_END once the camera has been turned to its top or bottom end in this session, so tiltDegrees runs from 0 to tiltRangeDegrees. REMEMBERED_BOTTOM_END counts from the bottom end as the camera's last session left it, until this session reaches an end.
 type CameraInterfacePtzPositionMessageTiltReference string
 
 // CameraInterfacePtzPositionMessageEnvelope The `ptz-position` message (version 1.0) of the `port1/systems/zero/capability-interfaces/camera` capability interface, as returned by an endpoint. The header identifies the message and selects the body schema.
 type CameraInterfacePtzPositionMessageEnvelope struct {
-	// Body Where a pan-tilt camera points after a step-ptz, move-ptz or stop-ptz request, estimated from the steps the provider has sent and how long and how fast the camera has turned in this camera session. Pan counts degrees to the right of panReference and tilt counts degrees up from tiltReference. A reference is the end of the range once the camera has been turned to that end in this session, and the session start before that.
+	// Body Where a pan-tilt camera points after a step-ptz, move-ptz or stop-ptz request, estimated from the steps the provider has sent and how long and how fast the camera has turned in this camera session. Pan counts degrees to the right of panReference and tilt counts degrees up from tiltReference. A reference is the end of the range once the camera has been turned to that end in this session. Before that it is the end as the camera's last session left it, when the provider remembers one, and otherwise the session start. A remembered reference holds only if nothing else turned the camera between sessions, so check it against a picture before relying on it.
 	Body CameraInterfacePtzPositionMessage `json:"body"`
 
 	// CorrelationToken Token used for correlating related messages

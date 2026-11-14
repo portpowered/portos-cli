@@ -64,6 +64,11 @@ class Gestures(unittest.TestCase):
         self.assertAlmostEqual(nod[0][1], 0.8)
         self.assertEqual(nod[1:-1], GESTURES["big-nod"])
 
+    def test_a_remembered_end_still_turns_a_gesture_away_from_it(self):
+        at_bottom = Position(pan=170, tilt=0, pan_range=PAN_RANGE, tilt_range=TILT_RANGE, pan_known=False,
+                             tilt_known=False, pan_remembered=True, tilt_remembered=True)
+        self.assertEqual(fit_gesture(GESTURES["nod"], at_bottom), fit_gesture(GESTURES["nod"], known(170, 0)))
+
     def test_a_gesture_next_to_an_end_turns_away_first_and_back_after(self):
         nod = fit_gesture(GESTURES["nod"], known(170, 0))
         self.assertEqual(nod[0][0], "UP")
@@ -127,6 +132,8 @@ class FakePort:
         self.pan, self.tilt = pan, tilt  # true angles from the left and bottom ends
         self.start = (pan, tilt)
         self.pan_known = self.tilt_known = False
+        # remembered reports both axes from the ends as the last session left them.
+        self.remembered = False
         self.env = {}
         self.calls = []
         self.fail = None
@@ -168,14 +175,19 @@ class FakePort:
 
     def _report(self, moved, moving=None):
         def reported(name, value, start):
-            return value if getattr(self, name + "_known") else value - start
+            return value if getattr(self, name + "_known") or self.remembered else value - start
+
+        def reference(name, end):
+            if getattr(self, name + "_known"):
+                return end
+            return "REMEMBERED_" + end if self.remembered else "SESSION_START"
         return {"position": {
             "movedDegrees": moved,
             "panMoving": moving in ("LEFT", "RIGHT"), "tiltMoving": moving in ("UP", "DOWN"),
             "panDegrees": reported("pan", self.pan, self.start[0]), "panRangeDegrees": PAN_RANGE,
-            "panReference": "LEFT_END" if self.pan_known else "SESSION_START",
+            "panReference": reference("pan", "LEFT_END"),
             "tiltDegrees": reported("tilt", self.tilt, self.start[1]), "tiltRangeDegrees": TILT_RANGE,
-            "tiltReference": "BOTTOM_END" if self.tilt_known else "SESSION_START",
+            "tiltReference": reference("tilt", "BOTTOM_END"),
         }}
 
 
@@ -183,6 +195,25 @@ class CameraCalls(unittest.TestCase):
     def setUp(self):
         self.port = FakePort()
         self.log = io.StringIO()
+
+    def test_a_remembered_position_is_not_known_until_trusted(self):
+        self.port.remembered = True
+        camera = Camera("cam", self.port, self.log)
+        position = camera.where()
+        self.assertTrue(position.pan_remembered and position.tilt_remembered)
+        self.assertFalse(position.pan_known or position.tilt_known)
+        self.assertEqual((position.pan, position.tilt), (150.0, 60.0))
+        camera.look_at(pan=200)
+        self.assertIn(["message", "move-ptz", "cam", "LEFT", "--seconds", "%g" % TO_END_SECONDS], self.port.calls)
+
+    def test_trusted_remembered_angles_turn_without_anchoring(self):
+        self.port.remembered = True
+        camera = Camera("cam", self.port, self.log)
+        self.assertTrue(camera.trust_remembered().pan_known)
+        self.port.calls.clear()
+        camera.look_at(pan=210)
+        self.assertEqual(self.port.calls, [["message", "step-ptz", "cam", "RIGHT", "--degrees", "60"]])
+        self.assertTrue(camera.position.pan_known)
 
     def test_hold_opens_a_shared_hold_and_releases_it(self):
         with Camera("cam", self.port, self.log) as camera:

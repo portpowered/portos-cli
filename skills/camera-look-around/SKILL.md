@@ -32,7 +32,7 @@ mkdir -p ~/camera/notes
 cp -rn "portos-cli-${VERSION#v}/skills/camera-look-around/tricks" ~/camera/
 ```
 
-`~/camera/tricks/lib/portos_camera.py` is the starter helper (a `Camera` class with `move`, `stop`, `to_end`, `glide`, `glide_to`, `level`, `turn`, `anchor`, `look_at`, `snapshot`, `panorama`, `gesture`, `patrol` and `follow`). The example tricks are `panorama`, `look-at`, `gesture`, `patrol` and `follow`. All of them are yours to improve.
+`~/camera/tricks/lib/portos_camera.py` is the starter helper (a `Camera` class with `where`, `trust_remembered`, `move`, `stop`, `to_end`, `glide`, `glide_to`, `level`, `turn`, `anchor`, `look_at`, `snapshot`, `panorama`, `gesture`, `patrol` and `follow`). The example tricks are `panorama`, `look-at`, `gesture`, `patrol` and `follow`. All of them are yours to improve.
 
 `cp -n` keeps the files you already have, so your own changes survive. After updating the CLI, run `diff -r` between the new `tricks` and `~/camera/tricks`, and copy over every file you have not changed yourself, the helper above all.
 
@@ -40,11 +40,11 @@ cp -rn "portos-cli-${VERSION#v}/skills/camera-look-around/tricks" ~/camera/
 
 1. **Hold the camera in shared mode and keep the lease.** `port session hold <camera> --camera --shared --json` prints `{holdId, lease, endpointId, kinds, shared}`. Export `PORTOS_LEASE=<lease>` for every command after it.
 2. **Look and turn only through `port`, with the lease.** Snapshots and turns come from your hold. A turn without the lease is refused (exit 13, `hold_lease_required`), because a turn moves the camera in your own session.
-3. **Anchor first, then think in angles.** At the start of a camera session the angles count from wherever the camera happened to point. Run to the left end and the bottom end once (`move-ptz LEFT --seconds 60`, then `move-ptz DOWN --seconds 60`, or `anchor()` in the helper). From then on pan is degrees right of the left end (`LEFT_END`) and tilt is degrees up from the bottom end (`BOTTOM_END`), and every angle you note stays valid for the rest of the session.
+3. **Know where the camera points, then think in angles.** Ask first (`stop-ptz`, or `where()` in the helper; it turns nothing). When the camera's last session reached its ends, the reply carries those angles as `REMEMBERED_LEFT_END` and `REMEMBERED_BOTTOM_END`. They hold only if nothing else turned the camera since, so take a snapshot and compare it with what your notes say is at those angles. If it matches, use them (`trust_remembered()` in the helper). If it does not, or the reply says `SESSION_START`, run to the left end and the bottom end once (`move-ptz LEFT --seconds 60`, then `move-ptz DOWN --seconds 60`, or `anchor()` in the helper). From then on pan is degrees right of the left end (`LEFT_END`) and tilt is degrees up from the bottom end (`BOTTOM_END`), and every angle you note stays valid for the rest of the session. A turn that runs the camera into an end also makes that axis exact again.
 4. **Turn in one command, then look.** Ask for the whole turn at once: `move-ptz` with `--seconds`, or `step-ptz` with `--degrees`. The camera does it in one go and tells you where it ended. Do not loop single steps. Take a snapshot after a turn and describe what you see together with the angle.
 5. **Keep a map of what is where.** Write down what you saw at each angle (`pan 170, tilt 40: the sofa`) in `~/camera/notes/`. To look at something again, turn to its angle; to answer "where is X", give the angle and the direction from the left end.
 6. **You cannot speak.** A shared hold has no talkback: the call owns the speaker. `port message play-audio` is refused (exit 12, `shared_hold_no_talkback`). Leave the speaking to the call.
-7. **The hold ends by itself.** A Ring camera ends its live view after about 12 minutes, which closes the shared session for every viewer, the call included. Your hold then becomes `ended` with reason `session_closed`. If you still need to look, hold the camera again (rule 1), export the new lease and anchor again: a new session counts angles from its own start. A session that runs to its own expiry (`camera.expiresAt` in `port session status --json`) ends with `session_expired`, and one whose camera is taken away ends with `preempted`. Check `port session status --json` whenever a command answers `hold_ended` or `camera_unavailable`.
+7. **The hold ends by itself.** A Ring camera ends its live view after about 12 minutes, which closes the shared session for every viewer, the call included. Your hold then becomes `ended` with reason `session_closed`. If you still need to look, hold the camera again (rule 1), export the new lease and check where the camera points again (rule 3): the new session starts from the angles the last one left, as remembered ones. A session that runs to its own expiry (`camera.expiresAt` in `port session status --json`) ends with `session_expired`, and one whose camera is taken away ends with `preempted`. Check `port session status --json` whenever a command answers `hold_ended` or `camera_unavailable`.
 8. **Always release at the end.** `port session release <holdId>` detaches you. The call keeps its live view. The camera closes about 30 seconds after the last viewer leaves.
 
 ## Orientation
@@ -54,9 +54,9 @@ Each `move-ptz`, `stop-ptz` and `step-ptz` reply (with `--json`, under `position
 | Field | Meaning |
 | --- | --- |
 | `panDegrees` | Degrees right of the left end. Before the camera has reached an end it counts from the session start and goes negative to the left |
-| `panReference` | `LEFT_END` once the camera has been turned to its left or right end in this session, `SESSION_START` before that |
+| `panReference` | `LEFT_END` once the camera has been turned to its left or right end in this session. Before that `REMEMBERED_LEFT_END` when the angle comes from the camera's last session (check a snapshot before relying on it), and `SESSION_START` otherwise |
 | `panRangeDegrees` | Full pan travel, left end to right end |
-| `tiltDegrees`, `tiltReference`, `tiltRangeDegrees` | The same for tilt, from the bottom end (`BOTTOM_END`) |
+| `tiltDegrees`, `tiltReference`, `tiltRangeDegrees` | The same for tilt, from the bottom end (`BOTTOM_END`, or `REMEMBERED_BOTTOM_END`) |
 | `movedDegrees` | How far this turn actually went. Less than you asked means the camera stopped at an end. 0 for a `move-ptz` without `--seconds`, which answers as it starts. Before the axis is anchored, a run to an end answers the time it ran times the turn rate, which can be more than the distance the camera had left |
 | `panMoving`, `tiltMoving` | The axis is still turning from a `move-ptz` without `--seconds`. The angle is where it is now and keeps changing until `stop-ptz` or the end |
 
@@ -144,7 +144,9 @@ import sys; sys.path.insert(0, "/home/you/camera/tricks/lib")
 from portos_camera import Camera
 
 with Camera("ep/0abc") as camera:          # uses PORTOS_LEASE if set, else holds and releases
-    camera.anchor()                        # runs to the left and bottom ends
+    here = camera.where()                  # angles the last session left, if remembered
+    camera.snapshot("start.jpg")           # compare with your notes at here.pan, here.tilt
+    camera.anchor()                        # runs to the ends; trust_remembered() when they match
     for pan in (0, 120, 240):
         camera.look_at(pan=pan, tilt=40)
         camera.snapshot("pan-%d.jpg" % pan)
